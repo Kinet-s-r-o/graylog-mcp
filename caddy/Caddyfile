@@ -1,0 +1,38 @@
+{
+    email {$CADDY_EMAIL}
+}
+
+(tls_defaults) {
+    # Leave CADDY_TLS_DIRECTIVE empty for Let's Encrypt/automatic HTTPS.
+    # For a custom certificate set it in .env to:
+    # tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
+    {$CADDY_TLS_DIRECTIVE}
+}
+
+{$CADDY_DOMAIN}:{$CADDY_WEBUI_HTTPS_PORT} {
+    import tls_defaults
+
+    # The WebUI port must not expose the MCP endpoint.
+    handle /mcp* {
+        respond "Not Found" 404
+    }
+    handle {
+        reverse_proxy graylog-mcp:{$MCP_PORT}
+    }
+}
+
+{$CADDY_DOMAIN}:{$CADDY_MCP_HTTPS_PORT} {
+    import tls_defaults
+
+    # The MCP port exposes only MCP and its health endpoint.
+    handle /mcp* {
+        reverse_proxy graylog-mcp:{$MCP_PORT}
+    }
+    handle /health {
+        reverse_proxy graylog-mcp:{$MCP_PORT}
+    }
+    handle {
+        respond "Not Found" 404
+    }
+
+}

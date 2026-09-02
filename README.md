@@ -5,7 +5,7 @@ Dockerizovaný MCP server pre Graylog s natívnymi nástrojmi, Streamable HTTP t
 ## Spustenie
 
 ```powershell
-Copy-Item .env.example .env
+Copy-Item example.env .env
 # uprav Graylog URL a API token; OPENAI_API_KEY je voliteľný
 docker compose up -d --build
 ```
@@ -17,6 +17,25 @@ Na lokálne overenie Compose konfigurácie bez produkčných údajov je priprave
 ```powershell
 docker compose --env-file example.env config
 ```
+
+## Voliteľné HTTPS cez Caddy
+
+HTTP funguje aj bez Caddy. HTTPS proxy sa spúšťa samostatným Compose profilom:
+
+```powershell
+docker compose --profile https up -d --build
+```
+
+Nastavenia Caddy sú v `.env`:
+
+- `CADDY_DOMAIN` je doména, na ktorej bude služba dostupná. Pri verejnej doméne Caddy automaticky vybaví a obnovuje certifikát Let’s Encrypt; DNS musí smerovať na server a porty 80/443 musia byť dostupné.
+- `CADDY_EMAIL` je kontaktný e-mail pre ACME registráciu.
+- `CADDY_TLS_DIRECTIVE` nechajte prázdne pre Let’s Encrypt. Pre vlastný certifikát nastavte napr. `tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem` a súbory vložte do adresára `CADDY_CERTS_DIR` (predvolene `./caddy/certs`).
+- `CADDY_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty na hostiteľovi. Predvolené HTTPS porty sú 443 pre WebUI a 8443 pre MCP.
+
+Caddy uchováva ACME účty a certifikáty v `./caddy/data`, takže automatická obnova pretrvá aj po reštarte kontajnera. Po zmene certifikátu stačí reštartovať Caddy: `docker compose --profile https restart caddy`.
+
+HTTPS endpointy sú oddelené: WebUI je na `https://logs.example.com/` a MCP na `https://logs.example.com:8443/mcp`. WebUI port MCP cestu odmieta a MCP port sprístupňuje iba `/mcp` a `/health`. Pri vlastnom certifikáte musí `CADDY_DOMAIN` zodpovedať menu v certifikáte.
 
 MCP endpoint pre agenta je `http://localhost:8000/mcp` (hodnoty portu a cesty sú v `.env`). Health check je na `/health`.
 Web UI is available at `http://localhost:8000/` and uses Basic Auth from `UI_USERNAME` and `UI_PASSWORD`. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
