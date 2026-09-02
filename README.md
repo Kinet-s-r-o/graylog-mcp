@@ -6,7 +6,7 @@ Dockerizovaný MCP server pre Graylog s natívnymi nástrojmi, Streamable HTTP t
 
 ```powershell
 Copy-Item .env.example .env
-# uprav Graylog URL, meno a heslo; OPENAI_API_KEY je voliteľný
+# uprav Graylog URL a API token; OPENAI_API_KEY je voliteľný
 docker compose up -d --build
 ```
 
@@ -29,4 +29,4 @@ Natívne nástroje: `search_messages`, `aggregate`, `list_streams`, `list_saved_
 
 ## Poznámky
 
-Server používa Graylog Search Scripting API endpointy `/api/search/messages` a `/api/search/aggregate`. Agregačné `group_by` položky používajú Graylog formát, napr. `{field: service}`; časové buckety možno pridať cez `interval`. Pri staršej alebo výrazne customizovanej verzii Graylogu sa endpointy dajú zmeniť v `graylog_mcp/graylog.py`. Do produkcie odporúčam HTTPS/reverse proxy pred MCP endpointom a Graylog používateľa s minimálnymi potrebnými právami.
+Server používa Graylog Search Scripting API endpointy `/api/search/messages` a `/api/search/aggregate`. Graylog autentifikácia používa API token v Basic Auth formáte `TOKEN:token`; nastavuje sa cez `GRAYLOG_API_TOKEN`. Agregačné `group_by` položky používajú Graylog formát, napr. `{field: service}`; časové buckety možno pridať cez `interval`. Pri staršej alebo výrazne customizovanej verzii Graylogu sa endpointy dajú zmeniť v `graylog_mcp/graylog.py`. Do produkcie odporúčam HTTPS/reverse proxy pred MCP endpointom a Graylog používateľa s minimálnymi potrebnými právami.

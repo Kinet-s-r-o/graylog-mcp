@@ -17,7 +17,8 @@ class GraylogClient:
         self.audit = audit
         self.client = httpx.AsyncClient(
             base_url=settings.normalized_graylog_url,
-            auth=(settings.graylog_username, settings.graylog_password),
+            # Graylog access tokens use HTTP Basic Auth as TOKEN:token.
+            auth=(settings.graylog_api_token, "token"),
             verify=settings.graylog_verify_tls,
             timeout=settings.graylog_timeout_seconds,
             headers={"Accept": "application/json", "X-Requested-By": "graylog-mcp"},

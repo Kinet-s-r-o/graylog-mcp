@@ -12,8 +12,7 @@ class Settings(BaseSettings):
     ui_password: str
     log_level: str = "INFO"
     graylog_url: str
-    graylog_username: str
-    graylog_password: str
+    graylog_api_token: str
     graylog_verify_tls: bool = True
     graylog_timeout_seconds: float = 30
     graylog_default_limit: int = 100
