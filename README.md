@@ -18,9 +18,9 @@ Na lokálne overenie Compose konfigurácie bez produkčných údajov je priprave
 docker compose --env-file example.env config
 ```
 
-## Voliteľné HTTPS cez Caddy
+## Voliteľný HTTP/HTTPS reverse proxy cez Caddy
 
-HTTP funguje aj bez Caddy. HTTPS proxy sa spúšťa samostatným Compose profilom:
+Aplikácia počúva na dvoch samostatných portoch: `MCP_PORT` pre MCP a agentské REST API, `WEBUI_PORT` pre WebUI a administračné API. Obe rozhrania sú na hostiteľovi predvolene bindnuté iba na `127.0.0.1`; verejný HTTP aj HTTPS prístup môže obsluhovať Caddy. Caddy sa spúšťa existujúcim Compose profilom `https`:
 
 ```powershell
 docker compose --profile https up -d --build
@@ -31,30 +31,33 @@ Nastavenia Caddy sú v `.env`:
 - `CADDY_DOMAIN` je doména, na ktorej bude služba dostupná. Pri verejnej doméne Caddy automaticky vybaví a obnovuje certifikát Let’s Encrypt; DNS musí smerovať na server a porty 80/443 musia byť dostupné.
 - `CADDY_EMAIL` je kontaktný e-mail pre ACME registráciu.
 - `CADDY_TLS_DIRECTIVE` nechajte prázdne pre Let’s Encrypt. Pre vlastný certifikát nastavte napr. `tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem` a súbory vložte do adresára `CADDY_CERTS_DIR` (predvolene `./caddy/certs`).
-- `CADDY_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty publikované na hostiteľovi bez úpravy `docker-compose.yml`. Predvolené porty sú 80 pre HTTP/ACME, 443 pre HTTPS WebUI a 8443 pre HTTPS MCP. Napríklad `CADDY_WEBUI_HTTPS_PORT=9443` sprístupní WebUI na porte 9443.
-- `CADDY_HTTP_BIND`, `CADDY_WEBUI_BIND` a `CADDY_MCP_BIND` určujú hostiteľské rozhranie pre každý publikovaný port; `0.0.0.0` znamená všetky rozhrania a `127.0.0.1` iba lokálny prístup.
+- `CADDY_HTTP_PORT` zostáva vyhradený pre ACME overenie a automatické presmerovanie na HTTPS; pri verejnom Let's Encrypt nasadení má zostať na porte 80.
+- `CADDY_WEBUI_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty publikované na hostiteľovi bez úpravy `docker-compose.yml`. Predvolené hodnoty sú 8080 pre voliteľný HTTP WebUI, 443 pre HTTPS WebUI a 8443 pre HTTPS MCP.
+- `CADDY_HTTP_BIND`, `CADDY_WEBUI_HTTP_BIND`, `CADDY_WEBUI_BIND` a `CADDY_MCP_BIND` určujú hostiteľské rozhranie pre každý publikovaný port; `0.0.0.0` znamená všetky rozhrania a `127.0.0.1` iba lokálny prístup.
 
 Caddy uchováva ACME účty a certifikáty v `./caddy/data`, takže automatická obnova pretrvá aj po reštarte kontajnera. Po zmene certifikátu stačí reštartovať Caddy: `docker compose --profile https restart caddy`.
 
-HTTPS endpointy sú oddelené: WebUI je na `https://logs.example.com/` a MCP na `https://logs.example.com:8443/mcp`. WebUI port MCP cestu odmieta a MCP port sprístupňuje iba `/mcp` a `/health`. Pri vlastnom certifikáte musí `CADDY_DOMAIN` zodpovedať menu v certifikáte. Backend port sa predvolene publikuje iba na `127.0.0.1`, aby sa toto oddelenie nedalo obísť. `MCP_BIND=0.0.0.0` používajte iba pri zámernom priamom HTTP nasadení chránenom externým firewallom.
+Endpointy sú oddelené už v aplikácii a Caddy ich iba preposiela: voliteľný HTTP WebUI je na `http://logs.example.com:8080/`, HTTPS WebUI na `https://logs.example.com/` a MCP na `https://logs.example.com:8443/mcp`. `MCP_PORT` odmieta WebUI cesty a `WEBUI_PORT` odmieta MCP aj agentské `/api/v1` cesty. Caddy navyše blokuje MCP cestu na oboch WebUI listeneroch. Port 80 ostáva Caddy k dispozícii pre ACME a HTTPS presmerovanie.
+
+Pre verejný HTTP WebUI cez Caddy a obe natívne rozhrania dostupné iba lokálne použite napríklad `MCP_BIND=127.0.0.1`, `WEBUI_BIND=127.0.0.1`, `CADDY_WEBUI_HTTP_BIND=0.0.0.0`, `CADDY_WEBUI_HTTP_PORT=8080` a `UI_COOKIE_SECURE=false`. `MCP_HOST` aj `WEBUI_HOST` ponechajte na `0.0.0.0`, aby sa k nim Caddy dostal cez internú Docker sieť. Čisté HTTP nešifruje prihlasovacie údaje ani session cookie; pre nedôveryhodnú sieť používajte HTTPS a `UI_COOKIE_SECURE=true`.
 
 MCP endpoint pre agenta je `http://localhost:8000/mcp` (hodnoty portu a cesty sú v `.env`). Health check je na `/health`.
-Web UI is available at `http://localhost:8000/` and uses a session-based login form at `/login` with `UI_USERNAME` and `UI_PASSWORD`. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
+Web UI is available directly at `http://localhost:8001/` (`WEBUI_PORT`) and uses a session-based login form at `/login` with `UI_USERNAME` and `UI_PASSWORD`. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
 
 Query rules are managed in SQLite from the `Query Rules` UI section. A rule controls the Lucene filter, message/aggregation mode, time range, result limit, grouping, metrics, time bucket, default template parameters, and agent instructions. Definitions from `queries.yaml` are imported only as initial defaults and can then be edited in the UI.
-REST API je dostupné pod `/api/v1` a interaktívna Swagger dokumentácia na `http://localhost:8000/docs`; OpenAPI schéma je na `/openapi.json`.
+Agentské REST API je dostupné iba na `MCP_PORT` pod `/api/v1`, interaktívna Swagger dokumentácia na `http://localhost:8000/docs` a OpenAPI schéma na `/openapi.json`. Administračné `/ui/api` je dostupné iba na `WEBUI_PORT`.
 
 MCP klient sa pripája na `/mcp` cez `Authorization: Bearer <agent-api-key>`. Rovnaký Bearer kľúč vyžadujú všetky `/api/v1` endpointy okrem `/health`. Každý agent je databázovo viazaný na jeden Graylog server; server sa vyberá podľa API kľúča a klient ho nemôže zmeniť. Výsledky `/api/v1/audit` sú obmedzené na záznamy daného klienta. Admin operácie v UI sú chránené oddelenými `UI_USERNAME`/`UI_PASSWORD` údajmi, CSRF tokenom a obmedzením neúspešných prihlásení.
 
 Nový agent dostane API kľúč v odpovedi pri vytvorení. Kľúč si ulož, pretože databáza uchováva iba jeho hash a posledné štyri znaky.
 
-| Rozhranie | Požadované oprávnenie |
-| --- | --- |
-| `/health` | bez autentifikácie |
-| `/login`, WebUI | WebUI meno a heslo, následne session cookie |
-| zapisujúce `/ui/api/*`, `/logout` | WebUI session a CSRF token |
-| `/api/v1/*` | aktívny MCP klientsky Bearer kľúč; audit je obmedzený na daného klienta |
-| `/mcp` | aktívny MCP klientsky Bearer kľúč a voliteľné CIDR pravidlá |
+| Natívny port | Rozhranie | Požadované oprávnenie |
+| --- | --- | --- |
+| oba | `/health` | bez autentifikácie |
+| `WEBUI_PORT` | `/login`, WebUI | WebUI meno a heslo, následne session cookie |
+| `WEBUI_PORT` | zapisujúce `/ui/api/*`, `/logout` | WebUI session a CSRF token |
+| `MCP_PORT` | `/api/v1/*` | aktívny MCP klientsky Bearer kľúč; audit je obmedzený na daného klienta |
+| `MCP_PORT` | `/mcp` | aktívny MCP klientsky Bearer kľúč a voliteľné CIDR pravidlá |
 
 Príklady REST volaní:
 

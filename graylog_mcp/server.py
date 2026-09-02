@@ -117,6 +117,24 @@ def _client_ip(request: Request) -> str:
     peer_ip = request.client.host if request.client else ""
     return resolve_client_ip(peer_ip, request.headers.get("x-forwarded-for"), trusted_proxy_networks)
 
+def _listener_port(request: Request) -> int | None:
+    address = request.scope.get("server")
+    try:
+        return int(address[1]) if address else None
+    except (IndexError, TypeError, ValueError):
+        return None
+
+def _is_agent_interface_path(path: str) -> bool:
+    return (
+        path.startswith(settings.mcp_path)
+        or path.startswith("/api/v1")
+        or path in {"/docs", "/openapi.json", "/redoc"}
+        or path.startswith("/docs/")
+    )
+
+def _is_webui_interface_path(path: str) -> bool:
+    return path in {"/", "/login", "/logout"} or path.startswith("/ui")
+
 async def require_agent(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
     if not credentials: raise HTTPException(status_code=401, detail="Bearer API key required")
     context = await audit.authenticate_agent(credentials.credentials)
@@ -130,9 +148,17 @@ async def require_agent(request: Request, credentials: HTTPAuthorizationCredenti
         agent_context.reset(token)
 
 @api.middleware("http")
-async def mcp_authentication(request: Request, call_next):
+async def interface_security(request: Request, call_next):
     response = None
-    if request.url.path.startswith(settings.mcp_path):
+    path = request.url.path
+    listener_port = _listener_port(request)
+    if listener_port not in {settings.mcp_port, settings.webui_port}:
+        response = PlainTextResponse("Not Found", status_code=404)
+    elif listener_port == settings.webui_port and _is_agent_interface_path(path):
+        response = PlainTextResponse("Not Found", status_code=404)
+    elif listener_port == settings.mcp_port and _is_webui_interface_path(path):
+        response = PlainTextResponse("Not Found", status_code=404)
+    elif path.startswith(settings.mcp_path):
         value = request.headers.get("authorization", "")
         context = await audit.authenticate_agent(value.split(" ", 1)[1].strip()) if value.lower().startswith("bearer ") else None
         if not context:
@@ -145,7 +171,7 @@ async def mcp_authentication(request: Request, call_next):
                 response = await call_next(request)
             finally:
                 agent_context.reset(token)
-    elif request.url.path.startswith("/ui/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
+    elif path.startswith("/ui/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
         session_token = request.cookies.get(UI_SESSION_COOKIE)
         if not ui_sessions.get(session_token):
             response = _ui_unauthorized()
@@ -153,7 +179,7 @@ async def mcp_authentication(request: Request, call_next):
             response = JSONResponse({"detail": "Invalid or missing CSRF token"}, status_code=403)
         else:
             response = await call_next(request)
-    elif request.url.path == "/logout" and request.method == "POST":
+    elif path == "/logout" and request.method == "POST":
         session_token = request.cookies.get(UI_SESSION_COOKIE)
         if not ui_sessions.valid_csrf(session_token, request.headers.get("x-csrf-token")):
             response = JSONResponse({"detail": "Invalid or missing CSRF token"}, status_code=403)
@@ -166,7 +192,7 @@ async def mcp_authentication(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     response.headers.setdefault("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
-    if request.url.path == "/" or request.url.path.startswith(("/ui", "/login", "/logout")):
+    if path == "/" or path.startswith(("/ui", "/login", "/logout")):
         response.headers.setdefault("Cache-Control", "no-store")
     return response
 
@@ -733,7 +759,31 @@ async def ui_audit(request: Request):
 api.mount("/", mcp.streamable_http_app())
 
 def main():
+    import socket
     import uvicorn
-    uvicorn.run(api, host=settings.mcp_host, port=settings.mcp_port, log_level=settings.log_level.lower())
+
+    def listener(host: str, port: int):
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        result = socket.socket(family, socket.SOCK_STREAM)
+        result.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        result.bind((host, port))
+        result.listen(2048)
+        return result
+
+    sockets = [
+        listener(settings.mcp_host, settings.mcp_port),
+        listener(settings.webui_host, settings.webui_port),
+    ]
+    try:
+        config = uvicorn.Config(
+            api,
+            host=settings.mcp_host,
+            port=settings.mcp_port,
+            log_level=settings.log_level.lower(),
+        )
+        uvicorn.Server(config).run(sockets=sockets)
+    finally:
+        for bound_socket in sockets:
+            bound_socket.close()
 
 if __name__ == "__main__": main()

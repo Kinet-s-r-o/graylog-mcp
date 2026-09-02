@@ -64,3 +64,8 @@ def test_secret_cipher_roundtrip_and_plaintext_compatibility():
 def test_settings_rejects_a_weak_encryption_key():
     with pytest.raises(ValidationError):
         Settings(ui_password="a-strong-test-password", secret_encryption_key="too-short")
+
+
+def test_settings_require_separate_mcp_and_webui_ports():
+    with pytest.raises(ValidationError):
+        Settings(ui_password="a-strong-test-password", mcp_port=8000, webui_port=8000)

@@ -16,17 +16,26 @@ def test_authorization_csrf_and_agent_scoped_audit(monkeypatch, tmp_path):
     monkeypatch.setenv("SECRET_ENCRYPTION_KEY", "api-test-master-key-with-32-characters")
     sys.modules.pop("graylog_mcp.server", None)
     server = importlib.import_module("graylog_mcp.server")
+    mcp_url = lambda path: f"http://testserver:{server.settings.mcp_port}{path}"
 
-    with TestClient(server.api) as client:
+    with TestClient(
+        server.api,
+        base_url=f"http://testserver:{server.settings.webui_port}",
+    ) as client:
         assert client.get("/health").status_code == 200
+        assert client.get(mcp_url("/health")).status_code == 200
+        assert client.get(mcp_url("/"), follow_redirects=False).status_code == 404
+        assert client.get(mcp_url("/login"), follow_redirects=False).status_code == 404
+        assert client.get("/api/v1/queries").status_code == 404
+        assert client.post("/mcp").status_code == 404
         unauthenticated_agent_calls = [
-            client.post("/api/v1/search/messages", json={"query": "*"}),
-            client.post("/api/v1/search/aggregate", json={"query": "*"}),
-            client.get("/api/v1/streams"),
-            client.get("/api/v1/queries"),
-            client.post("/api/v1/queries/run", json={"name": "errors_by_service"}),
-            client.get("/api/v1/audit"),
-            client.post("/mcp"),
+            client.post(mcp_url("/api/v1/search/messages"), json={"query": "*"}),
+            client.post(mcp_url("/api/v1/search/aggregate"), json={"query": "*"}),
+            client.get(mcp_url("/api/v1/streams")),
+            client.get(mcp_url("/api/v1/queries")),
+            client.post(mcp_url("/api/v1/queries/run"), json={"name": "errors_by_service"}),
+            client.get(mcp_url("/api/v1/audit")),
+            client.post(mcp_url("/mcp")),
         ]
         assert {response.status_code for response in unauthenticated_agent_calls} == {401}
         assert client.get("/").history[0].status_code == 303
@@ -98,7 +107,7 @@ def test_authorization_csrf_and_agent_scoped_audit(monkeypatch, tmp_path):
         api_key = created_agent.json()["api_key"]
         assert len(api_key) >= 24
         bearer = {"Authorization": f"Bearer {api_key}"}
-        assert client.get("/api/v1/queries", headers=bearer).status_code == 200
+        assert client.get(mcp_url("/api/v1/queries"), headers=bearer).status_code == 200
 
         restricted_agent = client.post(
             "/ui/api/agents",
@@ -111,12 +120,12 @@ def test_authorization_csrf_and_agent_scoped_audit(monkeypatch, tmp_path):
         )
         assert restricted_agent.status_code == 201
         restricted_bearer = {"Authorization": f"Bearer {restricted_agent.json()['api_key']}"}
-        assert client.get("/api/v1/queries", headers=restricted_bearer).status_code == 403
+        assert client.get(mcp_url("/api/v1/queries"), headers=restricted_bearer).status_code == 403
 
         agent = client.portal.call(server.audit.authenticate_agent, api_key)
         client.portal.call(partial(server.audit.record, source="mcp", operation="owned", agent_id=agent["agent_id"]))
         client.portal.call(partial(server.audit.record, source="mcp", operation="other", agent_id=agent["agent_id"] + 100))
-        scoped = client.get("/api/v1/audit", headers=bearer)
+        scoped = client.get(mcp_url("/api/v1/audit"), headers=bearer)
         assert scoped.status_code == 200
         assert [item["operation"] for item in scoped.json()["items"]] == ["owned"]
 

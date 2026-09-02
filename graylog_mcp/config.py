@@ -1,5 +1,5 @@
 from pathlib import Path
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,8 +7,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
     mcp_host: str = "0.0.0.0"
-    mcp_port: int = 8000
+    mcp_port: int = Field(8000, ge=1, le=65535)
     mcp_path: str = "/mcp"
+    webui_host: str = "0.0.0.0"
+    webui_port: int = Field(8001, ge=1, le=65535)
     ui_username: str = "admin"
     ui_password: SecretStr
     ui_session_ttl_seconds: int = 8 * 60 * 60
@@ -48,6 +50,12 @@ class Settings(BaseSettings):
         if len(raw) < 32:
             raise ValueError("SECRET_ENCRYPTION_KEY must contain at least 32 characters")
         return value
+
+    @model_validator(mode="after")
+    def validate_listener_ports(self):
+        if self.mcp_port == self.webui_port:
+            raise ValueError("MCP_PORT and WEBUI_PORT must use different ports")
+        return self
 
     @property
     def normalized_graylog_url(self) -> str | None:

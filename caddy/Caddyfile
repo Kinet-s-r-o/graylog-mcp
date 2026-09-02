@@ -9,6 +9,17 @@
     {$CADDY_TLS_DIRECTIVE}
 }
 
+# Optional plain-HTTP WebUI entry point on a dedicated port. Port 80 remains
+# available for ACME challenges and automatic HTTPS redirects.
+http://{$CADDY_DOMAIN}:{$CADDY_WEBUI_HTTP_PORT} {
+    handle {$MCP_PATH}* {
+        respond "Not Found" 404
+    }
+    handle {
+        reverse_proxy graylog-mcp:{$WEBUI_PORT}
+    }
+}
+
 {$CADDY_DOMAIN}:{$CADDY_WEBUI_HTTPS_PORT} {
     import tls_defaults
 
@@ -17,7 +28,7 @@
         respond "Not Found" 404
     }
     handle {
-        reverse_proxy graylog-mcp:{$MCP_PORT}
+        reverse_proxy graylog-mcp:{$WEBUI_PORT}
     }
 }
 

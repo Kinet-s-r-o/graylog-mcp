@@ -47,6 +47,8 @@ Goal: close externally exploitable gaps and establish deterministic request/sess
    - remove agent access to the global audit log, or scope results to the authenticated client;
    - keep WebUI audit access administrator-only.
 3. Harden network exposure:
+   - listen on separate native ports for MCP/agent REST and WebUI/admin routes;
+   - reject cross-interface routes in the application, independently of Caddy;
    - bind the backend host port to loopback by default when Caddy is used;
    - document direct-HTTP versus reverse-proxy deployment modes;
    - define trusted-proxy handling before using forwarded client IPs for CIDR checks.
