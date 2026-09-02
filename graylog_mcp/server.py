@@ -191,6 +191,11 @@ curl http://localhost:8000/api/v1/queries \
   -H "Authorization: Bearer AGENT_API_KEY"</pre><p>For Docker, start or rebuild with <code>docker compose up -d --build</code>. The UI is at <code>http://localhost:8000/</code>; replace the host and port if <code>MCP_PORT</code> is changed.</p></section>
 </main></body></html>"""
 
+DOCS_HTML = DOCS_HTML.replace(
+    '<section><h2>3. Query Rules</h2>',
+    '<section><h2>3. Query Rules</h2><div class="card"><h3>How template variables work</h3><p><code>${service}</code> is a placeholder, not a built-in Graylog variable and not an automatically detected field. You choose the variable name yourself. In <code>service:${service} AND level:3</code>, the value is inserted before the query is sent to Graylog.</p><ol><li>Put a placeholder in the query using <code>${name}</code>. Use letters, numbers, and underscores; start with a letter or underscore.</li><li>Set an optional fallback in <strong>Default parameters JSON</strong>, for example <code>{"service":"api"}</code>.</li><li>Supply or override the value when calling <code>run_saved_query</code>, for example <code>{"service":"web"}</code>. Call-time values take precedence over defaults.</li></ol><p>There is no fixed list of variable names. Use descriptive names such as <code>service</code>, <code>host</code>, <code>environment</code>, or <code>status</code>. The direct <strong>Graylog query (Lucene)</strong> field is sent as-is and does not substitute variables.</p></div>'
+)
+
 UI_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Graylog MCP</title><style>
@@ -240,6 +245,11 @@ function showSection(id){document.querySelectorAll('.page-section').forEach(x=>x
 document.querySelectorAll('.nav-links a').forEach(x=>x.onclick=e=>{e.preventDefault();history.replaceState(null,'','#'+x.getAttribute('href').slice(1));showSection(x.dataset.section)})
 showSection(location.hash==='#clients'?'clientsSection':location.hash==='#queries'?'queriesSection':location.hash==='#audit'?'auditSection':'graylogSection');loadServers();
 </script></body></html>"""
+
+UI_HTML = UI_HTML.replace(
+    'Template values use the <code>${name}</code> syntax.',
+    'Values come from Default parameters JSON or run_saved_query parameters; call-time values override defaults. The direct query field does not substitute variables.'
+)
 
 def _ui_authorized(request: Request) -> bool:
     value = request.headers.get("authorization", "")
