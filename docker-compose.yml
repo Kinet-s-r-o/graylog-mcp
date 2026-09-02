@@ -2,6 +2,7 @@ services:
   graylog-mcp:
     build: .
     image: graylog-custom-mcp:local
+    pull_policy: build
     restart: unless-stopped
     env_file:
       - path: .env

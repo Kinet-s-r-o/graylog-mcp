@@ -10,6 +10,8 @@ Copy-Item .env.example .env
 docker compose up -d --build
 ```
 
+Vďaka `pull_policy: build` funguje aj jednoduché `docker compose up -d`; Compose image najprv lokálne zostaví a nebude ho hľadať v Docker registry.
+
 Na lokálne overenie Compose konfigurácie bez produkčných údajov je pripravený [example.env](example.env):
 
 ```powershell
