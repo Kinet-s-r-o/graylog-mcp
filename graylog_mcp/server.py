@@ -8,6 +8,9 @@ import string
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+import httpx
 
 from mcp.server.fastmcp import FastMCP
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -18,7 +21,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from .catalog import QueryCatalog
 from .config import Settings
-from .graylog import GraylogClient
+from .graylog import GraylogClient, GraylogError
 from .openai_agent import OpenAIAgent
 from .audit import AuditStore
 
@@ -168,11 +171,11 @@ main{max-width:1100px;margin:2rem auto;padding:0 1rem}.page-section{display:none
 label{display:block;font-weight:600;margin:.8rem 0 .25rem}input,select,textarea,button{font:inherit;padding:.55rem;border:1px solid #b8c3ce;border-radius:5px;box-sizing:border-box;width:100%}
 textarea{min-height:90px;font-family:ui-monospace,monospace}button{width:auto;background:#2563eb;color:white;border:0;cursor:pointer;margin-top:1rem}button.secondary{background:#566573}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}@media(max-width:700px){.grid{grid-template-columns:1fr}}
-pre{background:#111827;color:#d1fae5;padding:1rem;border-radius:6px;overflow:auto;min-height:180px}.muted{color:#64748b}.theme{background:#e2e8f0;color:#17202a;margin:0}.nav-links{margin-left:auto}.nav-wrap{gap:.5rem}
+pre{background:#111827;color:#d1fae5;padding:1rem;border-radius:6px;overflow:auto;min-height:180px}.muted{color:#64748b}.status-message{white-space:pre-line}.theme{background:#e2e8f0;color:#17202a;margin:0}.nav-links{margin-left:auto}.nav-wrap{gap:.5rem}
 body.dark{background:#071426;color:#e5eefb}body.dark .page-section{background:#0d2138;border-color:#1e456d}body.dark input,body.dark select,body.dark textarea{background:#102b48;color:#e5eefb;border-color:#32618e}body.dark .muted{color:#9db4cc}body.dark .theme{background:#21476e;color:#e5eefb}
 @media(max-width:700px){main{margin:1rem auto;padding:0 .7rem}.nav-toggle{display:block}.nav-links{display:none;position:absolute;top:3.3rem;left:0;right:0;background:#102a43;flex-direction:column;padding:.5rem 1rem;box-shadow:0 4px 8px #0003}.nav-links.open{display:flex}.nav-wrap{position:relative}.page-section{padding:.9rem}.grid{grid-template-columns:1fr}h1{font-size:1.45rem}h2{font-size:1.2rem}}
 </style></head><body><header><div class="nav-wrap"><div class="brand">Graylog MCP</div><button class="nav-toggle" onclick="toggleMenu()" aria-label="Open menu">☰ Menu</button><nav class="nav-links" id="navLinks"><a href="#graylog" data-section="graylogSection">Graylog Servers</a><a href="#clients" data-section="clientsSection">MCP Clients</a><a href="#queries" data-section="queriesSection">Query Rules</a><a href="#audit" data-section="auditSection">Audit Log</a></nav><button class="theme" onclick="toggleTheme()" id="themeButton">Dark mode</button></div></header><main>
-<section id="graylogSection" class="page-section active"><h2>Graylog Servers</h2><div class="grid"><div><label>Name</label><input id="serverName" placeholder="production"></div><div><label>URL</label><input id="serverUrl" placeholder="https://graylog.example.com"></div><div><label>API token</label><input id="serverToken" type="password" placeholder="leave blank when editing to keep the current token"></div><div><label>Verify TLS</label><select id="serverTls"><option value="true">yes</option><option value="false">no</option></select></div><div><label>Timeout (seconds)</label><input id="serverTimeout" type="number" value="30" min="1"></div></div><button onclick="testServer()" class="secondary">Test connection</button> <button onclick="addServer()">Add server</button> <button onclick="updateServer()">Save changes</button> <label>Existing server</label><select id="serverId" onchange="selectServer()"></select> <button class="secondary" onclick="loadServers()">Refresh servers</button><p id="serverStatus" class="muted"></p>
+<section id="graylogSection" class="page-section active"><h2>Graylog Servers</h2><div class="grid"><div><label>Name</label><input id="serverName" placeholder="production"></div><div><label>URL</label><input id="serverUrl" placeholder="https://graylog.example.com"></div><div><label>API token</label><input id="serverToken" type="password" placeholder="leave blank when editing to keep the current token"></div><div><label>Verify TLS</label><select id="serverTls"><option value="true">yes</option><option value="false">no</option></select></div><div><label>Timeout (seconds)</label><input id="serverTimeout" type="number" value="30" min="1"></div></div><button onclick="testServer()" class="secondary">Test connection</button> <button onclick="addServer()">Add server</button> <button onclick="updateServer()">Save changes</button> <label>Existing server</label><select id="serverId" onchange="selectServer()"></select> <button class="secondary" onclick="loadServers()">Refresh servers</button><p id="serverStatus" class="muted status-message"></p>
 <label>Query type</label><select id="kind"><option value="search">Message search</option><option value="aggregate">Aggregation</option><option value="saved">Managed query</option></select>
 <label id="savedLabel" hidden>Managed query</label><select id="saved" hidden></select>
 <label>Graylog query (Lucene)</label><textarea id="query" placeholder="level:3 OR service:api"></textarea>
@@ -274,6 +277,32 @@ async def ui_servers(request: Request):
         except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
     return JSONResponse({"items": await audit.list_servers()})
 
+def _safe_url(value: str) -> str:
+    """Return a display-safe URL without exposing embedded credentials."""
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        if parsed.port:
+            host += f":{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
+    except ValueError:
+        return value
+
+def _connection_error_message(exc: Exception, url: str) -> str:
+    endpoint = _safe_url(url)
+    if isinstance(exc, GraylogError):
+        return f"Graylog API returned an error.\nDetails: {exc}"
+    if isinstance(exc, httpx.ConnectTimeout):
+        return f"Connection to {endpoint} timed out.\nCheck that the server is reachable and increase Timeout (seconds) if needed."
+    if isinstance(exc, httpx.ConnectError):
+        detail = str(exc.__cause__ or exc).strip()
+        if detail == "All connection attempts failed":
+            detail = "No TCP connection could be established; the host or port did not respond."
+        return f"Could not connect to {endpoint}.\nDetails: {detail}\nCheck the URL, DNS, port, and firewall."
+    if isinstance(exc, httpx.TimeoutException):
+        return f"The request to {endpoint} timed out.\nCheck that Graylog is reachable and increase Timeout (seconds) if needed."
+    return f"Connection test failed for {endpoint}.\nError type: {type(exc).__name__}\nDetails: {exc}"
+
 @mcp.custom_route("/ui/api/servers/test", methods=["POST"])
 async def ui_test_server(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
@@ -289,7 +318,7 @@ async def ui_test_server(request: Request):
         result = await temporary.request("GET", "/api/cluster")
         return JSONResponse({"success": True, "message": "The Graylog API connection is working.", "cluster": result})
     except Exception as exc:
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=502)
+        return JSONResponse({"success": False, "message": _connection_error_message(exc, server.get("url", data.get("url", "")))}, status_code=502)
     finally:
         if temporary: await temporary.close()
 
