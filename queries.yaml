@@ -1,0 +1,21 @@
+# Custom query catalog. Use ${parameter} placeholders and override them through run_saved_query.
+queries:
+  errors_by_service:
+    description: "Count error messages grouped by service"
+    type: aggregate
+    query: 'level:3 OR level:4 OR level:5'
+    minutes: 60
+    group_by:
+      - {field: service}
+    metrics:
+      - {function: count, id: count}
+    interval: 5m
+  recent_login_failures:
+    description: "Recent failed login attempts"
+    type: messages
+    query: '"${username}" AND ("login failed" OR "authentication failure")'
+    defaults:
+      username: '*'
+    minutes: 60
+    limit: 100
+    fields: [timestamp, source, username, message]

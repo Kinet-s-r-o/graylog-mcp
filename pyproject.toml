@@ -1,0 +1,19 @@
+[project]
+name = "graylog-custom-mcp"
+version = "0.1.0"
+description = "Custom Graylog MCP server with Streamable HTTP and optional OpenAI orchestration"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.9.0,<2",
+  "openai>=1.68.0,<2",
+  "PyYAML>=6.0.2,<7",
+  "httpx>=0.27.0,<1",
+  "aiosqlite>=0.20.0,<1",
+  "pydantic-settings>=2.7.0,<3"
+]
+
+[project.scripts]
+graylog-mcp = "graylog_mcp.server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,18 @@
+services:
+  graylog-mcp:
+    build: .
+    image: graylog-custom-mcp:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${MCP_PORT:-8000}:${MCP_PORT:-8000}"
+    volumes:
+      - ./queries.yaml:/app/queries.yaml:ro
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:' + __import__('os').environ.get('MCP_PORT', '8000') + '/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
