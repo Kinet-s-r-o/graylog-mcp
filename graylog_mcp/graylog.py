@@ -12,15 +12,16 @@ class GraylogError(RuntimeError):
 
 
 class GraylogClient:
-    def __init__(self, settings: Settings, audit: AuditStore | None = None):
+    def __init__(self, settings: Settings, audit: AuditStore | None = None, *, server: dict | None = None):
         self.settings = settings
         self.audit = audit
+        server = server or {}
         self.client = httpx.AsyncClient(
-            base_url=settings.normalized_graylog_url,
+            base_url=(server.get("url") or settings.normalized_graylog_url or "http://invalid-graylog"),
             # Graylog access tokens use HTTP Basic Auth as TOKEN:token.
-            auth=(settings.graylog_api_token, "token"),
-            verify=settings.graylog_verify_tls,
-            timeout=settings.graylog_timeout_seconds,
+            auth=(server.get("api_token") or settings.graylog_api_token or "invalid-token", "token"),
+            verify=server.get("verify_tls", settings.graylog_verify_tls),
+            timeout=server.get("timeout_seconds", settings.graylog_timeout_seconds),
             headers={"Accept": "application/json", "X-Requested-By": "graylog-mcp"},
         )
 

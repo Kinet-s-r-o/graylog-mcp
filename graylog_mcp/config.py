@@ -11,8 +11,10 @@ class Settings(BaseSettings):
     ui_username: str = "admin"
     ui_password: str
     log_level: str = "INFO"
-    graylog_url: str
-    graylog_api_token: str
+    # Kept optional for backwards-compatible .env files. Graylog servers are
+    # now managed in SQLite through the admin UI.
+    graylog_url: str | None = None
+    graylog_api_token: str | None = None
     graylog_verify_tls: bool = True
     graylog_timeout_seconds: float = 30
     graylog_default_limit: int = 100
@@ -28,5 +30,5 @@ class Settings(BaseSettings):
     audit_max_payload_chars: int = 100000
 
     @property
-    def normalized_graylog_url(self) -> str:
-        return self.graylog_url.rstrip("/")
+    def normalized_graylog_url(self) -> str | None:
+        return self.graylog_url.rstrip("/") if self.graylog_url else None

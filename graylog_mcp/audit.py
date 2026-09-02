@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+import hashlib
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,17 @@ class AuditStore:
             )
         """)
         await self.db.execute("CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_log(created_at DESC)")
+        await self.db.execute("""CREATE TABLE IF NOT EXISTS graylog_servers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+          url TEXT NOT NULL, api_token TEXT NOT NULL, verify_tls INTEGER NOT NULL DEFAULT 1,
+          timeout_seconds REAL NOT NULL DEFAULT 30, created_at TEXT NOT NULL
+        )""")
+        await self.db.execute("""CREATE TABLE IF NOT EXISTS agents (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+          api_key_hash TEXT NOT NULL UNIQUE, api_key_last4 TEXT NOT NULL,
+          graylog_server_id INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL, FOREIGN KEY(graylog_server_id) REFERENCES graylog_servers(id)
+        )""")
         await self.db.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS audit_fts USING fts5(
             source, operation, request_json, response_json, error,
             tokenize='unicode61', content='audit_log', content_rowid='id'
@@ -121,6 +134,55 @@ class AuditStore:
         if self.db:
             await self.db.close()
             self.db = None
+
+    async def list_servers(self):
+        cursor = await self.db.execute("SELECT id,name,url,verify_tls,timeout_seconds,created_at FROM graylog_servers ORDER BY name")
+        rows = await cursor.fetchall()
+        return [dict(zip(["id","name","url","verify_tls","timeout_seconds","created_at"], row)) for row in rows]
+
+    async def add_server(self, name: str, url: str, api_token: str, verify_tls: bool = True, timeout_seconds: float = 30):
+        await self.db.execute("INSERT INTO graylog_servers(name,url,api_token,verify_tls,timeout_seconds,created_at) VALUES(?,?,?,?,?,?)",
+                              (name, url.rstrip("/"), api_token, int(verify_tls), timeout_seconds, datetime.now(timezone.utc).isoformat()))
+        await self.db.commit()
+        cursor = await self.db.execute("SELECT id,name,url,verify_tls,timeout_seconds,created_at FROM graylog_servers WHERE name=?", (name,))
+        row = await cursor.fetchone()
+        return dict(zip(["id","name","url","verify_tls","timeout_seconds","created_at"], row))
+
+    async def remove_server(self, server_id: int):
+        await self.db.execute("DELETE FROM graylog_servers WHERE id=?", (server_id,)); await self.db.commit()
+
+    async def list_agents(self):
+        cursor = await self.db.execute("""SELECT a.id,a.name,a.api_key_last4,a.graylog_server_id,a.active,a.created_at,s.name
+            FROM agents a JOIN graylog_servers s ON s.id=a.graylog_server_id ORDER BY a.name""")
+        rows = await cursor.fetchall()
+        cols = ["id","name","api_key_last4","graylog_server_id","active","created_at","graylog_server_name"]
+        return [dict(zip(cols, row)) for row in rows]
+
+    async def add_agent(self, name: str, server_id: int, api_key: str | None = None):
+        api_key = api_key or "glmc_" + secrets.token_urlsafe(32)
+        digest = hashlib.sha256(api_key.encode()).hexdigest()
+        await self.db.execute("INSERT INTO agents(name,api_key_hash,api_key_last4,graylog_server_id,created_at) VALUES(?,?,?,?,?)",
+                              (name, digest, api_key[-4:], server_id, datetime.now(timezone.utc).isoformat()))
+        await self.db.commit()
+        return {"api_key": api_key, "name": name, "graylog_server_id": server_id}
+
+    async def remove_agent(self, agent_id: int):
+        await self.db.execute("DELETE FROM agents WHERE id=?", (agent_id,)); await self.db.commit()
+
+    async def authenticate_agent(self, api_key: str):
+        digest = hashlib.sha256(api_key.encode()).hexdigest()
+        cursor = await self.db.execute("""SELECT a.id,a.name,a.graylog_server_id,s.name,s.url,s.api_token,s.verify_tls,s.timeout_seconds
+            FROM agents a JOIN graylog_servers s ON s.id=a.graylog_server_id
+            WHERE a.api_key_hash=? AND a.active=1""", (digest,))
+        row = await cursor.fetchone()
+        if not row: return None
+        return dict(zip(["agent_id","agent_name","graylog_server_id","server_name","url","api_token","verify_tls","timeout_seconds"], row))
+
+    async def get_server(self, server_id: int):
+        cursor = await self.db.execute("SELECT id,name,url,api_token,verify_tls,timeout_seconds FROM graylog_servers WHERE id=?", (server_id,))
+        row = await cursor.fetchone()
+        if not row: return None
+        return dict(zip(["id","name","url","api_token","verify_tls","timeout_seconds"], row))
 
 
 def stopwatch() -> float:
