@@ -152,7 +152,7 @@ pre{background:#111827;color:#d1fae5;padding:1rem;border-radius:6px;overflow:aut
 body.dark{background:#071426;color:#e5eefb}body.dark .page-section{background:#0d2138;border-color:#1e456d}body.dark input,body.dark select,body.dark textarea{background:#102b48;color:#e5eefb;border-color:#32618e}body.dark .muted{color:#9db4cc}body.dark .theme{background:#21476e;color:#e5eefb}
 @media(max-width:700px){main{margin:1rem auto;padding:0 .7rem}.nav-toggle{display:block}.nav-links{display:none;position:absolute;top:3.3rem;left:0;right:0;background:#102a43;flex-direction:column;padding:.5rem 1rem;box-shadow:0 4px 8px #0003}.nav-links.open{display:flex}.nav-wrap{position:relative}.topbar{align-items:flex-start}.page-section{padding:.9rem}.grid{grid-template-columns:1fr}h1{font-size:1.45rem}h2{font-size:1.2rem}}
 </style></head><body><header><div class="nav-wrap"><div class="brand">Graylog MCP</div><button class="nav-toggle" onclick="toggleMenu()" aria-label="Otvoriť menu">☰ Menu</button><nav class="nav-links" id="navLinks"><a href="#graylog" data-section="graylogSection">Graylog servery</a><a href="#clients" data-section="clientsSection">MCP klienti</a><a href="#audit" data-section="auditSection">Audit Log</a></nav></div></header><main><div class="topbar"><div><h1>Graylog MCP</h1><p class="muted">Webové rozhranie pre správu serverov, agentov a audit logu.</p></div><button class="theme" onclick="toggleTheme()" id="themeButton">Tmavý režim</button></div>
-<section id="graylogSection" class="page-section active"><h2>Graylog servery</h2><div class="grid"><div><label>Názov</label><input id="serverName" placeholder="produkcia"></div><div><label>URL</label><input id="serverUrl" placeholder="https://graylog.example.com"></div><div><label>API token</label><input id="serverToken" type="password"></div><div><label>TLS overenie</label><select id="serverTls"><option value="true">áno</option><option value="false">nie</option></select></div></div><button onclick="addServer()">Pridať Graylog server</button> <select id="serverId"></select> <button class="secondary" onclick="loadServers()">Obnoviť servery</button>
+<section id="graylogSection" class="page-section active"><h2>Graylog servery</h2><div class="grid"><div><label>Názov</label><input id="serverName" placeholder="produkcia"></div><div><label>URL</label><input id="serverUrl" placeholder="https://graylog.example.com"></div><div><label>API token</label><input id="serverToken" type="password"></div><div><label>TLS overenie</label><select id="serverTls"><option value="true">áno</option><option value="false">nie</option></select></div></div><button onclick="testServer()" class="secondary">Otestovať pripojenie</button> <button onclick="addServer()">Pridať Graylog server</button> <select id="serverId"></select> <button class="secondary" onclick="loadServers()">Obnoviť servery</button><p id="serverStatus" class="muted"></p>
 <label>Typ dotazu</label><select id="kind"><option value="search">Vyhľadávanie správ</option><option value="aggregate">Agregácia</option><option value="saved">Uložený dotaz</option></select>
 <label id="savedLabel" hidden>Uložený dotaz</label><select id="saved" hidden></select>
 <label>Graylog dotaz (Lucene)</label><textarea id="query" placeholder="level:3 OR service:api"></textarea>
@@ -167,6 +167,7 @@ const $=id=>document.getElementById(id); async function loadSaved(){let r=await 
 $('kind').onchange=()=>{let s=$('kind').value==='saved';$('saved').hidden=!s;$('savedLabel').hidden=!s};loadSaved();
 async function loadServers(){let r=await fetch('/ui/api/servers');let d=await r.json();$('serverId').innerHTML=d.items.map(x=>`<option value="${x.id}">${x.name} (${x.url})</option>`).join('')}
 async function addServer(){let b={name:$('serverName').value,url:$('serverUrl').value,api_token:$('serverToken').value,verify_tls:$('serverTls').value==='true'};let r=await fetch('/ui/api/servers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});$('out').textContent=JSON.stringify(await r.json(),null,2);loadServers()}
+async function testServer(){let b={name:$('serverName').value,url:$('serverUrl').value,api_token:$('serverToken').value,verify_tls:$('serverTls').value==='true'};if(!b.url||!b.api_token)b.server_id=+$('serverId').value;$('serverStatus').textContent='Testujem pripojenie...';let r=await fetch('/ui/api/servers/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});let d=await r.json();$('serverStatus').textContent=(d.success?'✓ ':'✗ ')+(d.message||d.detail);$('serverStatus').style.color=d.success?'#15803d':'#b91c1c'}
 async function addAgent(){let b={name:$('agentName').value,graylog_server_id:+$('serverId').value};if($('agentKey').value)b.api_key=$('agentKey').value;let r=await fetch('/ui/api/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});$('agentOut').textContent=JSON.stringify(await r.json(),null,2)}
 async function run(){let k=$('kind').value,b={server_id:+$('serverId').value};if(k==='saved'){b={...b,name:$('saved').value,parameters:{}}}else if(k==='search'){b={...b,query:$('query').value,minutes:+$('minutes').value,limit:+$('limit').value}}else{try{b={...b,query:$('query').value,minutes:+$('minutes').value,group_by:$('groupBy').value.split(',').map(x=>x.trim()).filter(Boolean).map(field=>({field})),metrics:JSON.parse($('metrics').value)}}catch(e){$('out').textContent='Neplatný JSON v metrikách: '+e;return}};let r=await fetch('/ui/api/'+(k==='saved'?'saved':'query'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});$('out').textContent=JSON.stringify(await r.json(),null,2)}
 async function loadStreams(){let r=await fetch('/ui/api/streams?server_id='+$('serverId').value);$('out').textContent=JSON.stringify(await r.json(),null,2)}
@@ -227,6 +228,22 @@ async def ui_servers(request: Request):
         try: return JSONResponse(await audit.add_server(**(await request.json())), status_code=201)
         except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
     return JSONResponse({"items": await audit.list_servers()})
+
+@mcp.custom_route("/ui/api/servers/test", methods=["POST"])
+async def ui_test_server(request: Request):
+    if not _ui_authorized(request): return _ui_unauthorized()
+    data = await request.json(); temporary = None
+    try:
+        server = await audit.get_server(int(data["server_id"])) if data.get("server_id") else data
+        if not server or not server.get("url") or not server.get("api_token"):
+            return JSONResponse({"success": False, "message": "Vyplň URL a Graylog API token."}, status_code=400)
+        temporary = GraylogClient(settings, audit, server=server)
+        result = await temporary.request("GET", "/api/cluster")
+        return JSONResponse({"success": True, "message": "Pripojenie na Graylog API je funkčné.", "cluster": result})
+    except Exception as exc:
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=502)
+    finally:
+        if temporary: await temporary.close()
 
 @mcp.custom_route("/ui/api/agents", methods=["GET", "POST", "DELETE"])
 async def ui_agents(request: Request):
