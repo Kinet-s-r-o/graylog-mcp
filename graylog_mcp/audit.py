@@ -53,6 +53,10 @@ class AuditStore:
           graylog_server_id INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL, FOREIGN KEY(graylog_server_id) REFERENCES graylog_servers(id)
         )""")
+        await self.db.execute("""CREATE TABLE IF NOT EXISTS query_definitions (
+          name TEXT PRIMARY KEY, definition_json TEXT NOT NULL,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
         await self.db.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS audit_fts USING fts5(
             source, operation, request_json, response_json, error,
             tokenize='unicode61', content='audit_log', content_rowid='id'
@@ -148,6 +152,23 @@ class AuditStore:
         row = await cursor.fetchone()
         return dict(zip(["id","name","url","verify_tls","timeout_seconds","created_at"], row))
 
+    async def update_server(self, server_id: int, name: str, url: str, api_token: str | None = None,
+                            verify_tls: bool = True, timeout_seconds: float = 30):
+        existing = await self.get_server(server_id)
+        if not existing:
+            raise ValueError("Graylog server not found")
+        token = api_token or existing["api_token"]
+        await self.db.execute(
+            "UPDATE graylog_servers SET name=?,url=?,api_token=?,verify_tls=?,timeout_seconds=? WHERE id=?",
+            (name, url.rstrip("/"), token, int(verify_tls), timeout_seconds, server_id),
+        )
+        await self.db.commit()
+        cursor = await self.db.execute(
+            "SELECT id,name,url,verify_tls,timeout_seconds,created_at FROM graylog_servers WHERE id=?", (server_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(zip(["id","name","url","verify_tls","timeout_seconds","created_at"], row))
+
     async def remove_server(self, server_id: int):
         await self.db.execute("DELETE FROM graylog_servers WHERE id=?", (server_id,)); await self.db.commit()
 
@@ -183,6 +204,41 @@ class AuditStore:
         row = await cursor.fetchone()
         if not row: return None
         return dict(zip(["id","name","url","api_token","verify_tls","timeout_seconds"], row))
+
+    async def seed_queries(self, definitions: dict[str, dict]):
+        now = datetime.now(timezone.utc).isoformat()
+        for name, definition in definitions.items():
+            await self.db.execute(
+                "INSERT OR IGNORE INTO query_definitions(name,definition_json,created_at,updated_at) VALUES(?,?,?,?)",
+                (name, json.dumps(definition, ensure_ascii=False), now, now),
+            )
+        await self.db.commit()
+
+    async def list_queries(self):
+        cursor = await self.db.execute("SELECT name,definition_json,created_at,updated_at FROM query_definitions ORDER BY name")
+        rows = await cursor.fetchall()
+        result = []
+        for name, raw, created_at, updated_at in rows:
+            item = json.loads(raw); item.update({"name": name, "created_at": created_at, "updated_at": updated_at})
+            result.append(item)
+        return result
+
+    async def get_query(self, name: str):
+        cursor = await self.db.execute("SELECT definition_json FROM query_definitions WHERE name=?", (name,))
+        row = await cursor.fetchone()
+        return json.loads(row[0]) if row else None
+
+    async def save_query(self, name: str, definition: dict):
+        now = datetime.now(timezone.utc).isoformat()
+        await self.db.execute("""INSERT INTO query_definitions(name,definition_json,created_at,updated_at)
+            VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET definition_json=excluded.definition_json,updated_at=excluded.updated_at""",
+            (name, json.dumps(definition, ensure_ascii=False), now, now),
+        )
+        await self.db.commit()
+        return {"name": name, **definition, "updated_at": now}
+
+    async def remove_query(self, name: str):
+        await self.db.execute("DELETE FROM query_definitions WHERE name=?", (name,)); await self.db.commit()
 
 
 def stopwatch() -> float:

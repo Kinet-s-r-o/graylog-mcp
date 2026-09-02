@@ -19,7 +19,9 @@ docker compose --env-file example.env config
 ```
 
 MCP endpoint pre agenta je `http://localhost:8000/mcp` (hodnoty portu a cesty sú v `.env`). Health check je na `/health`.
-Webové UI je na `http://localhost:8000/` a používa Basic Auth z premenných `UI_USERNAME` a `UI_PASSWORD`. UI je rozdelené do sekcií `Graylog servery`, `MCP klienti` a `Audit Log`; na mobilnom zariadení sa horné menu prepína na hamburger menu. V UI sa najprv pridá Graylog server (URL + Graylog API token), tlačidlom `Otestovať pripojenie` sa overí API komunikácia a potom sa vytvorí klient/agent s prideleným serverom.
+Web UI is available at `http://localhost:8000/` and uses Basic Auth from `UI_USERNAME` and `UI_PASSWORD`. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
+
+Query rules are managed in SQLite from the `Query Rules` UI section. A rule controls the Lucene filter, message/aggregation mode, time range, result limit, grouping, metrics, time bucket, default template parameters, and agent instructions. Definitions from `queries.yaml` are imported only as initial defaults and can then be edited in the UI.
 REST API je dostupné pod `/api/v1` a interaktívna Swagger dokumentácia na `http://localhost:8000/docs`; OpenAPI schéma je na `/openapi.json`.
 
 MCP klient sa pripája na `/mcp` cez `Authorization: Bearer <agent-api-key>`. Každý agent je databázovo viazaný na jeden Graylog server; server sa vyberá podľa API kľúča a klient ho nemôže zmeniť. Admin operácie v UI sú chránené oddelenými `UI_USERNAME`/`UI_PASSWORD` údajmi.
@@ -35,11 +37,11 @@ Invoke-RestMethod http://localhost:8000/api/v1/search/aggregate -Method Post -Co
 Audit databáza SQLite sa ukladá do `./data/audit.db` a eviduje AI otázky/odpovede aj Graylog API volania/odpovede. Retenciu nastavujú `AUDIT_RETENTION_DAYS`, `AUDIT_MAX_ROWS` a `AUDIT_MAX_PAYLOAD_CHARS`; čistenie prebieha pri štarte a po každom zápise.
 Audit log obsahuje aj SQLite FTS5 fulltext index. Vo web UI ho možno prehľadávať podľa slov, fráz, prefixov (`timeout*`) a boolean výrazov (`error OR failed`), s voliteľným filtrovaním podľa zdroja.
 
-## Custom dotazy
+## Managed query rules
 
-Dotazy sa upravujú v [queries.yaml](queries.yaml). Podporované typy sú `messages` a `aggregate`; používajú rovnaké parametre ako Graylog API. Parametre `${name}` možno poslať cez MCP nástroj `run_saved_query`.
+Queries are created and edited in the `Query Rules` section of the Web UI and persisted in SQLite. Supported types are `messages` and `aggregate`. Template parameters such as `${name}` can be supplied through the `run_saved_query` MCP tool. The bundled [queries.yaml](queries.yaml) file is used only to seed an empty database.
 
-Natívne nástroje: `search_messages`, `aggregate`, `list_streams`, `list_saved_queries`, `run_saved_query` a `ask_graylog`. Pri zmene `queries.yaml` stačí súbor upraviť a reštartovať kontajner (`docker compose restart`).
+Native tools: `search_messages`, `aggregate`, `list_streams`, `list_saved_queries`, `run_saved_query`, and `ask_graylog`.
 
 ## Poznámky
 
