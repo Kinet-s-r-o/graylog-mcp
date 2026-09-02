@@ -194,6 +194,10 @@ class AuditStore:
         return dict(zip(["id","name","url","verify_tls","timeout_seconds","created_at"], row))
 
     async def remove_server(self, server_id: int):
+        cursor = await self.db.execute("SELECT COUNT(*) FROM agents WHERE graylog_server_id=?", (server_id,))
+        linked = int((await cursor.fetchone())[0])
+        if linked:
+            raise ValueError("Cannot delete a Graylog server while MCP clients are assigned to it")
         await self.db.execute("DELETE FROM graylog_servers WHERE id=?", (server_id,)); await self.db.commit()
 
     async def list_agents(self):
