@@ -19,7 +19,7 @@ docker compose --env-file example.env config
 ```
 
 MCP endpoint pre agenta je `http://localhost:8000/mcp` (hodnoty portu a cesty sú v `.env`). Health check je na `/health`.
-Webové UI je na `http://localhost:8000/` a používa Basic Auth z premenných `UI_USERNAME` a `UI_PASSWORD`. V UI sa najprv pridá Graylog server (URL + Graylog API token), potom klient/agent s prideleným serverom.
+Webové UI je na `http://localhost:8000/` a používa Basic Auth z premenných `UI_USERNAME` a `UI_PASSWORD`. UI je rozdelené do sekcií `Graylog servery`, `MCP klienti` a `Audit Log`; na mobilnom zariadení sa horné menu prepína na hamburger menu. V UI sa najprv pridá Graylog server (URL + Graylog API token), potom klient/agent s prideleným serverom.
 REST API je dostupné pod `/api/v1` a interaktívna Swagger dokumentácia na `http://localhost:8000/docs`; OpenAPI schéma je na `/openapi.json`.
 
 MCP klient sa pripája na `/mcp` cez `Authorization: Bearer <agent-api-key>`. Každý agent je databázovo viazaný na jeden Graylog server; server sa vyberá podľa API kľúča a klient ho nemôže zmeniť. Admin operácie v UI sú chránené oddelenými `UI_USERNAME`/`UI_PASSWORD` údajmi.
