@@ -399,6 +399,7 @@ UI_HTML = UI_HTML.replace('<a class="help-link"', '<a class="logout-link" href="
 UI_HTML = UI_HTML.replace('<a class="help-link" href="/ui/help" target="_blank" rel="noopener" title="Open UI documentation" aria-label="Open UI documentation">?</a>', '')
 UI_HTML = UI_HTML.replace('</style>', '.logout-link{color:#dbeafe;text-decoration:none;padding:.45rem .55rem;border-radius:5px}.logout-link:hover{background:#244f78}.logout-confirm{display:inline-block;color:#fff;text-decoration:none;padding:.55rem .8rem;border-radius:5px}.logout-backdrop{align-items:center;justify-content:center}.logout-backdrop .modal-card{height:auto;max-height:calc(100vh - 2rem);border-radius:10px} </style>', 1)
 UI_HTML = UI_HTML.replace('</style>', '.section-heading-actions{display:flex;align-items:center;gap:.65rem}.section-help{display:inline-flex;align-items:center;justify-content:center;width:1.8rem;height:1.8rem;box-sizing:border-box;border-radius:50%;background:#7c3aed;color:#fff;text-decoration:none;font-weight:700}.section-help:hover{background:#6d28d9}.audit-summary{display:none!important}body.dark .section-help{background:#8b5cf6;color:#fff}body.dark .section-help:hover{background:#7c3aed} </style>', 1)
+UI_HTML = UI_HTML.replace('main{max-width:1100px;margin:2rem auto;padding:0 1rem}', 'main{max-width:1400px;margin:2rem auto;padding:0 1rem}')
 
 def _ui_authorized(request: Request) -> bool:
     token = request.cookies.get(UI_SESSION_COOKIE)
