@@ -38,7 +38,7 @@ Caddy uchováva ACME účty a certifikáty v `./caddy/data`, takže automatická
 HTTPS endpointy sú oddelené: WebUI je na `https://logs.example.com/` a MCP na `https://logs.example.com:8443/mcp`. WebUI port MCP cestu odmieta a MCP port sprístupňuje iba `/mcp` a `/health`. Pri vlastnom certifikáte musí `CADDY_DOMAIN` zodpovedať menu v certifikáte.
 
 MCP endpoint pre agenta je `http://localhost:8000/mcp` (hodnoty portu a cesty sú v `.env`). Health check je na `/health`.
-Web UI is available at `http://localhost:8000/` and uses Basic Auth from `UI_USERNAME` and `UI_PASSWORD`. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
+Web UI is available at `http://localhost:8000/` and uses a session-based login form at `/login` with `UI_USERNAME` and `UI_PASSWORD`. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
 
 Query rules are managed in SQLite from the `Query Rules` UI section. A rule controls the Lucene filter, message/aggregation mode, time range, result limit, grouping, metrics, time bucket, default template parameters, and agent instructions. Definitions from `queries.yaml` are imported only as initial defaults and can then be edited in the UI.
 REST API je dostupné pod `/api/v1` a interaktívna Swagger dokumentácia na `http://localhost:8000/docs`; OpenAPI schéma je na `/openapi.json`.

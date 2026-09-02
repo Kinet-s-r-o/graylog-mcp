@@ -4,7 +4,9 @@ import json
 import logging
 import base64
 import hmac
+import secrets
 import string
+import time
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from typing import Any
@@ -17,7 +19,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
 from .catalog import QueryCatalog
 from .config import Settings
@@ -32,6 +34,9 @@ clients: dict[int, GraylogClient] = {}
 agent_context: ContextVar[dict | None] = ContextVar("agent_context", default=None)
 bearer = HTTPBearer(auto_error=False)
 catalog = QueryCatalog(settings.query_catalog_path)
+UI_SESSION_COOKIE = "graylog_ui_session"
+UI_SESSION_TTL = 8 * 60 * 60
+ui_sessions: dict[str, float] = {}
 
 TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "search_messages", "description": "Search Graylog messages using a Lucene query", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "minutes": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["query"]}}},
@@ -173,7 +178,7 @@ DOCS_HTML = """<!doctype html>
 <title>Graylog MCP UI documentation</title><style>
 :root{font-family:system-ui,sans-serif;color:#17202a;background:#f5f7fa;line-height:1.5}body{margin:0}header{background:#102a43;color:#fff;padding:1rem}header .wrap,main{max-width:1100px;margin:auto}header .wrap{display:flex;align-items:center;justify-content:space-between;gap:1rem}header a{color:#dbeafe;text-decoration:none;border:1px solid #547493;border-radius:6px;padding:.45rem .7rem}.hero,section{background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:1.25rem;margin:1rem 0;box-shadow:0 2px 8px #0001}h1,h2{margin-top:0}h1{font-size:1.8rem}.muted{color:#64748b}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem}.card{border:1px solid #d9e0e7;border-radius:8px;padding:1rem}.card h3{margin-top:0;color:#102a43}code,pre{font-family:ui-monospace,monospace}code{background:#edf2f7;padding:.1rem .3rem;border-radius:3px}pre{background:#111827;color:#d1fae5;padding:1rem;border-radius:6px;overflow:auto;white-space:pre-wrap}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d9e0e7;padding:.65rem}th{background:#edf2f7}@media(max-width:700px){main{padding:0 .7rem}.hero,section{padding:.9rem}table{font-size:.9rem}th,td{padding:.45rem}}
 </style></head><body><header><div class="wrap"><strong>Graylog MCP</strong><a href="/">← Back to UI</a></div></header><main>
-<div class="hero"><h1>Web UI documentation</h1><p class="muted">This guide explains every UI section, field, action, expected format, and the equivalent REST examples. The UI itself is protected by Basic Auth.</p><p><strong>Base URL:</strong> <code>http://localhost:8000</code> &nbsp; <strong>Admin login:</strong> the configured <code>UI_USERNAME</code> and <code>UI_PASSWORD</code>.</p></div>
+<div class="hero"><h1>Web UI documentation</h1><p class="muted">This guide explains every UI section, field, action, expected format, and the equivalent REST examples. The UI itself is protected by a session-based login form.</p><p><strong>Base URL:</strong> <code>http://localhost:8000</code> &nbsp; <strong>Admin login:</strong> the configured <code>UI_USERNAME</code> and <code>UI_PASSWORD</code>.</p></div>
 <section><h2>1. Graylog Servers</h2><p>Add a Graylog server, select an existing one, test its API connection, or update its settings. Query execution and newly created agents use the selected server.</p><table><tr><th>Field / action</th><th>What to enter or expect</th></tr><tr><td><strong>Name</strong></td><td>A local label, for example <code>production</code> or <code>staging</code>.</td></tr><tr><td><strong>URL</strong></td><td>The Graylog base URL, for example <code>https://graylog.example.com</code>. Do not add <code>/api/cluster</code>; the UI adds the API path.</td></tr><tr><td><strong>API token</strong></td><td>Graylog API token. It is sent as Basic Auth in the <code>TOKEN:token</code> format. When editing, leave this blank to keep the stored token.</td></tr><tr><td><strong>Verify TLS</strong></td><td>Choose <code>yes</code> for normal HTTPS certificate verification. Choose <code>no</code> only for a trusted test environment with a self-signed certificate.</td></tr><tr><td><strong>Timeout (seconds)</strong></td><td>Positive connection/request timeout. Start with <code>30</code>; increase it for a slow or remote Graylog instance.</td></tr><tr><td><strong>Test connection</strong></td><td>Calls Graylog <code>GET /api/cluster</code> using the values currently in the form. It does not save changes.</td></tr><tr><td><strong>Add server</strong></td><td>Saves a new server configuration in SQLite.</td></tr><tr><td><strong>Save changes</strong></td><td>Updates the selected server. Blank API token preserves the existing token.</td></tr><tr><td><strong>Existing server</strong></td><td>Select a saved server to load its editable values. The token is never filled back into the form.</td></tr></table><p><strong>Connection errors:</strong> the result identifies the endpoint and provides details for timeout, TCP/DNS/port, TLS, or Graylog HTTP/API errors. Tokens are not included in the displayed URL.</p></section>
 <section><h2>2. MCP Clients / Agents</h2><p>Each client is permanently restricted to one selected Graylog server. Use the generated key as the Bearer token for MCP or REST agent requests.</p><table><tr><th>Field / action</th><th>What to enter or expect</th></tr><tr><td><strong>Client name</strong></td><td>A recognizable name, for example <code>grafana-agent</code> or <code>monitoring-agent</code>.</td></tr><tr><td><strong>API key (optional)</strong></td><td>Leave blank to generate a secure key, or provide your own key. The raw key is shown only after creation.</td></tr><tr><td><strong>Add client</strong></td><td>Creates the agent for the currently selected Graylog server. Store the returned key immediately; only its hash and last four characters are retained.</td></tr></table><pre>curl -H "Authorization: Bearer AGENT_API_KEY" http://localhost:8000/mcp</pre></section>
 <section><h2>3. Query Rules</h2><p>Query rules are reusable definitions stored in SQLite. They can be used by MCP agents through <code>run_saved_query</code>.</p><table><tr><th>Field</th><th>What to enter</th></tr><tr><td><strong>Existing rule</strong></td><td>Select an existing rule to edit. Use <strong>New rule</strong> to clear the form.</td></tr><tr><td><strong>Name</strong></td><td>Unique rule name, for example <code>errors_by_service</code>.</td></tr><tr><td><strong>Description</strong></td><td>Short explanation shown to agents and administrators.</td></tr><tr><td><strong>Type</strong></td><td><code>messages</code> returns matching messages; <code>aggregate</code> returns grouped metrics.</td></tr><tr><td><strong>Time range (minutes)</strong></td><td>Positive relative time window, for example <code>60</code>.</td></tr><tr><td><strong>Message limit</strong></td><td>Maximum messages for message search, for example <code>100</code>. The server applies its configured maximum.</td></tr><tr><td><strong>Time bucket</strong></td><td>Optional Graylog time unit for aggregation, for example <code>5m</code>, <code>1h</code>, or <code>1d</code>.</td></tr><tr><td><strong>Lucene query template</strong></td><td>Graylog/Lucene query, for example <code>service:${service} AND level:3</code>. Template variables use <code>${name}</code>.</td></tr><tr><td><strong>Group by JSON</strong></td><td>JSON array of grouping objects, for example <code>[{"field":"service"}]</code>. Use <code>[]</code> for no grouping.</td></tr><tr><td><strong>Metrics JSON</strong></td><td>JSON array of Graylog metrics, for example <code>[{"function":"count"}]</code>.</td></tr><tr><td><strong>Default parameters JSON</strong></td><td>JSON object for template defaults, for example <code>{"service":"api"}</code>.</td></tr><tr><td><strong>Instructions for the agent</strong></td><td>Plain-language guidance about when and how the rule should be used.</td></tr><tr><td><strong>Save / New / Delete rule</strong></td><td>Validate and persist, clear for a new rule, or permanently remove the selected rule.</td></tr></table><pre>curl -X POST http://localhost:8000/api/v1/queries/run \
@@ -350,25 +355,59 @@ async function deleteRuleItem(name){if(!confirm(`Delete query rule “${name}”
 function showSection(id){document.querySelectorAll('.page-section').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('.nav-links a').forEach(x=>x.classList.toggle('active',x.dataset.section===id));$('navLinks').classList.remove('open');if(id==='auditSection')loadAudit();if(id==='graylogSection')loadServers();if(id==='clientsSection')loadAgents();if(id==='queriesSection')loadSaved()}
 loadServers();loadSaved();'''
 UI_HTML = UI_HTML.replace('</script></body></html>', MANAGEMENT_JS + '</script></body></html>')
+UI_HTML = UI_HTML.replace('<a class="help-link"', '<a class="logout-link" href="/logout">Logout</a><a class="help-link"')
+UI_HTML = UI_HTML.replace('</style>', '.logout-link{color:#dbeafe;text-decoration:none;padding:.45rem .55rem;border-radius:5px}.logout-link:hover{background:#244f78} </style>', 1)
 
 def _ui_authorized(request: Request) -> bool:
-    value = request.headers.get("authorization", "")
-    if not value.lower().startswith("basic "): return False
-    try: raw = base64.b64decode(value.split(" ", 1)[1]).decode()
-    except (ValueError, UnicodeDecodeError): return False
-    username, _, password = raw.partition(":")
-    return hmac.compare_digest(username, settings.ui_username) and hmac.compare_digest(password, settings.ui_password)
+    token = request.cookies.get(UI_SESSION_COOKIE)
+    expires_at = ui_sessions.get(token or "")
+    if not expires_at: return False
+    if expires_at <= time.time():
+        ui_sessions.pop(token, None)
+        return False
+    return True
 
 def _ui_unauthorized():
-    return PlainTextResponse("Authentication required", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Graylog MCP UI"'})
+    return PlainTextResponse("Authentication required", status_code=401)
+
+LOGIN_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in — Graylog MCP</title><style>body{font-family:system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7fa;color:#17202a}.login-card{width:min(380px,calc(100% - 2rem));background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:2rem;box-shadow:0 8px 24px #0002}h1{margin:0 0 .35rem;color:#102a43;font-size:1.5rem}p{color:#64748b;margin:.25rem 0 1.5rem}label{display:block;font-weight:600;margin:.9rem 0 .25rem}input,button{font:inherit;box-sizing:border-box;width:100%;padding:.65rem;border:1px solid #b8c3ce;border-radius:5px}button{margin-top:1.25rem;background:#2563eb;color:#fff;border:0;cursor:pointer}.error{color:#b91c1c;background:#fef2f2;border-radius:5px;padding:.65rem;margin-bottom:1rem}@media(prefers-color-scheme:dark){body{background:#071426;color:#e5eefb}.login-card{background:#0d2138;border-color:#1e456d}h1{color:#e5eefb}p{color:#9db4cc}input{background:#102b48;color:#e5eefb;border-color:#32618e}.error{background:#451a1a;color:#fecaca}}</style></head><body><main class="login-card"><h1>Graylog MCP</h1><p>Sign in to the WebUI</p>{error}<form method="post" action="/login"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required autofocus><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form></main></body></html>"""
+
+def _login_page(error: str = "") -> HTMLResponse:
+    message = f'<div class="error">{error}</div>' if error else ""
+    return HTMLResponse(LOGIN_HTML.replace("{error}", message))
+
+@mcp.custom_route("/login", methods=["GET", "POST"])
+async def ui_login(request: Request):
+    if request.method == "GET":
+        return RedirectResponse("/", status_code=303) if _ui_authorized(request) else _login_page()
+    body = (await request.body()).decode("utf-8", errors="replace")
+    from urllib.parse import parse_qs
+    form = parse_qs(body)
+    username = form.get("username", [""])[0]
+    password = form.get("password", [""])[0]
+    if not (hmac.compare_digest(username, settings.ui_username) and hmac.compare_digest(password, settings.ui_password)):
+        return _login_page("Invalid username or password.")
+    token = secrets.token_urlsafe(32)
+    ui_sessions[token] = time.time() + UI_SESSION_TTL
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(UI_SESSION_COOKIE, token, max_age=UI_SESSION_TTL, httponly=True, samesite="lax", path="/")
+    return response
+
+@mcp.custom_route("/logout", methods=["GET", "POST"])
+async def ui_logout(request: Request):
+    token = request.cookies.get(UI_SESSION_COOKIE)
+    if token: ui_sessions.pop(token, None)
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(UI_SESSION_COOKIE, path="/")
+    return response
 
 @mcp.custom_route("/", methods=["GET"])
 async def ui_home(request: Request):
-    return _ui_unauthorized() if not _ui_authorized(request) else HTMLResponse(UI_HTML)
+    return RedirectResponse("/login", status_code=303) if not _ui_authorized(request) else HTMLResponse(UI_HTML)
 
 @mcp.custom_route("/ui/help", methods=["GET"])
 async def ui_help(request: Request):
-    return _ui_unauthorized() if not _ui_authorized(request) else HTMLResponse(DOCS_HTML)
+    return RedirectResponse("/login", status_code=303) if not _ui_authorized(request) else HTMLResponse(DOCS_HTML)
 
 @mcp.custom_route("/ui/api/queries", methods=["GET", "POST", "DELETE"])
 async def ui_queries(request: Request):
