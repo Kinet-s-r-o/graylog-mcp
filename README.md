@@ -31,7 +31,8 @@ Nastavenia Caddy sú v `.env`:
 - `CADDY_DOMAIN` je doména, na ktorej bude služba dostupná. Pri verejnej doméne Caddy automaticky vybaví a obnovuje certifikát Let’s Encrypt; DNS musí smerovať na server a porty 80/443 musia byť dostupné.
 - `CADDY_EMAIL` je kontaktný e-mail pre ACME registráciu.
 - `CADDY_TLS_DIRECTIVE` nechajte prázdne pre Let’s Encrypt. Pre vlastný certifikát nastavte napr. `tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem` a súbory vložte do adresára `CADDY_CERTS_DIR` (predvolene `./caddy/certs`).
-- `CADDY_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty na hostiteľovi. Predvolené HTTPS porty sú 443 pre WebUI a 8443 pre MCP.
+- `CADDY_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty publikované na hostiteľovi bez úpravy `docker-compose.yml`. Predvolené porty sú 80 pre HTTP/ACME, 443 pre HTTPS WebUI a 8443 pre HTTPS MCP. Napríklad `CADDY_WEBUI_HTTPS_PORT=9443` sprístupní WebUI na porte 9443.
+- `CADDY_HTTP_BIND`, `CADDY_WEBUI_BIND` a `CADDY_MCP_BIND` určujú hostiteľské rozhranie pre každý publikovaný port; `0.0.0.0` znamená všetky rozhrania a `127.0.0.1` iba lokálny prístup.
 
 Caddy uchováva ACME účty a certifikáty v `./caddy/data`, takže automatická obnova pretrvá aj po reštarte kontajnera. Po zmene certifikátu stačí reštartovať Caddy: `docker compose --profile https restart caddy`.
 
