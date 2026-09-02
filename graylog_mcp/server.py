@@ -162,6 +162,8 @@ async def api_run_query(body: SavedQueryRequest, _agent=Depends(require_agent)):
 async def api_audit(q: str | None = Query(None, description="FTS5 fulltext expression"), source: str | None = None, limit: int = Query(100, ge=1, le=500), _agent=Depends(require_agent)):
     return {"items": await audit.recent(limit, q, source)}
 
+METRICS_REFERENCE_HTML = """<section><h2>Graylog Metrics JSON reference</h2><p>Use a JSON array. You can combine multiple metrics in one request. The <code>field</code> must be a numeric or otherwise suitable field from your Graylog messages, except for <code>count</code>. The optional <code>sort</code> value can be <code>asc</code> or <code>desc</code>.</p><table><tr><th>Function</th><th>Purpose</th><th>Example</th></tr><tr><td><code>count</code></td><td>Counts matching messages. No field is required.</td><td><code>[{"function":"count"}]</code></td></tr><tr><td><code>average</code></td><td>Arithmetic average of a numeric field.</td><td><code>[{"function":"average","field":"response_ms"}]</code></td></tr><tr><td><code>latest</code></td><td>Latest value of a field in the matching data.</td><td><code>[{"function":"latest","field":"status_code"}]</code></td></tr><tr><td><code>max</code></td><td>Highest value of a numeric field.</td><td><code>[{"function":"max","field":"response_ms"}]</code></td></tr><tr><td><code>min</code></td><td>Lowest value of a numeric field.</td><td><code>[{"function":"min","field":"response_ms"}]</code></td></tr><tr><td><code>percentile</code></td><td>Percentile of a numeric field; configure it in <code>configuration</code>.</td><td><code>[{"function":"percentile","field":"response_ms","configuration":{"percentile":95}}]</code></td></tr><tr><td><code>stdDev</code></td><td>Standard deviation of a numeric field.</td><td><code>[{"function":"stdDev","field":"response_ms"}]</code></td></tr><tr><td><code>sum</code></td><td>Total of a numeric field.</td><td><code>[{"function":"sum","field":"bytes"}]</code></td></tr><tr><td><code>sumOfSquares</code></td><td>Sum of squared values of a numeric field.</td><td><code>[{"function":"sumOfSquares","field":"response_ms"}]</code></td></tr><tr><td><code>variance</code></td><td>Variance of a numeric field.</td><td><code>[{"function":"variance","field":"response_ms"}]</code></td></tr></table><h3>Combined example</h3><pre>[{"function":"count","id":"requests"},{"function":"average","field":"response_ms","id":"avg_response"},{"function":"percentile","field":"response_ms","configuration":{"percentile":95},"id":"p95_response"},{"function":"max","field":"response_ms","id":"max_response"}]</pre><p class="muted">Metric support and field availability depend on the Graylog version and the fields present in your messages. If a metric fails, verify the function spelling and field type.</p></section>"""
+
 DOCS_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Graylog MCP UI documentation</title><style>
@@ -195,6 +197,8 @@ DOCS_HTML = DOCS_HTML.replace(
     '<section><h2>3. Query Rules</h2>',
     '<section><h2>3. Query Rules</h2><div class="card"><h3>How template variables work</h3><p><code>${service}</code> is a placeholder, not a built-in Graylog variable and not an automatically detected field. You choose the variable name yourself. In <code>service:${service} AND level:3</code>, the value is inserted before the query is sent to Graylog.</p><ol><li>Put a placeholder in the query using <code>${name}</code>. Use letters, numbers, and underscores; start with a letter or underscore.</li><li>Set an optional fallback in <strong>Default parameters JSON</strong>, for example <code>{"service":"api"}</code>.</li><li>Supply or override the value when calling <code>run_saved_query</code>, for example <code>{"service":"web"}</code>. Call-time values take precedence over defaults.</li></ol><p>There is no fixed list of variable names. Use descriptive names such as <code>service</code>, <code>host</code>, <code>environment</code>, or <code>status</code>. The direct <strong>Graylog query (Lucene)</strong> field is sent as-is and does not substitute variables.</p></div>'
 )
+
+DOCS_HTML = DOCS_HTML.replace('<section><h2>4. Run a Graylog query</h2>', METRICS_REFERENCE_HTML + '<section><h2>4. Run a Graylog query</h2>')
 
 UI_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -250,6 +254,11 @@ UI_HTML = UI_HTML.replace(
     'Template values use the <code>${name}</code> syntax.',
     'Values come from Default parameters JSON or run_saved_query parameters; call-time values override defaults. The direct query field does not substitute variables.'
 )
+UI_HTML = UI_HTML.replace(
+    'Graylog metric definitions must be a JSON array.',
+    'Available functions with examples:<br><code>count</code>: <code>[{"function":"count"}]</code><br><code>average</code>: <code>[{"function":"average","field":"response_ms"}]</code><br><code>latest</code>: <code>[{"function":"latest","field":"status_code"}]</code><br><code>max</code>: <code>[{"function":"max","field":"response_ms"}]</code><br><code>min</code>: <code>[{"function":"min","field":"response_ms"}]</code><br><code>percentile</code>: <code>[{"function":"percentile","field":"response_ms","configuration":{"percentile":95}}]</code><br><code>stdDev</code>: <code>[{"function":"stdDev","field":"response_ms"}]</code><br><code>sum</code>: <code>[{"function":"sum","field":"bytes"}]</code><br><code>sumOfSquares</code>: <code>[{"function":"sumOfSquares","field":"response_ms"}]</code><br><code>variance</code>: <code>[{"function":"variance","field":"response_ms"}]</code>'
+)
+UI_HTML = UI_HTML.replace('width:260px;', 'width:420px;')
 
 def _ui_authorized(request: Request) -> bool:
     value = request.headers.get("authorization", "")
