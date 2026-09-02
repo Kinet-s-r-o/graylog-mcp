@@ -13,7 +13,7 @@
     import tls_defaults
 
     # The WebUI port must not expose the MCP endpoint.
-    handle /mcp* {
+    handle {$MCP_PATH}* {
         respond "Not Found" 404
     }
     handle {
@@ -25,7 +25,7 @@
     import tls_defaults
 
     # The MCP port exposes only MCP and its health endpoint.
-    handle /mcp* {
+    handle {$MCP_PATH}* {
         reverse_proxy graylog-mcp:{$MCP_PORT}
     }
     handle /health {

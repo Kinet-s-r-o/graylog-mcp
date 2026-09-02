@@ -8,7 +8,9 @@ services:
       - path: .env
         required: false
     ports:
-      - "${MCP_PORT:-8000}:${MCP_PORT:-8000}"
+      # Loopback by default prevents bypassing Caddy's WebUI/MCP separation.
+      # Set MCP_BIND=0.0.0.0 only for an intentional direct-HTTP deployment.
+      - "${MCP_BIND:-127.0.0.1}:${MCP_PORT:-8000}:${MCP_PORT:-8000}"
     volumes:
       - ./queries.yaml:/app/queries.yaml:ro
       - ./data:/data
@@ -30,6 +32,7 @@ services:
         required: false
     environment:
       MCP_PORT: "${MCP_PORT:-8000}"
+      MCP_PATH: "${MCP_PATH:-/mcp}"
       CADDY_DOMAIN: "${CADDY_DOMAIN:-localhost}"
       CADDY_EMAIL: "${CADDY_EMAIL:-admin@example.com}"
       CADDY_WEBUI_HTTPS_PORT: "${CADDY_WEBUI_HTTPS_PORT:-443}"

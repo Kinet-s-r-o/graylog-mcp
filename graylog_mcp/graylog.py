@@ -5,6 +5,7 @@ import httpx
 
 from .config import Settings
 from .audit import AuditStore, stopwatch
+from .security import agent_context
 
 
 class GraylogError(RuntimeError):
@@ -30,18 +31,19 @@ class GraylogClient:
 
     async def request(self, method: str, path: str, *, params=None, json=None) -> Any:
         started = stopwatch()
+        context = agent_context.get() or {}
+        agent_id = context.get("agent_id")
         try:
             response = await self.client.request(method, path, params=params, json=json)
             if response.is_error:
-                detail = response.text[:1000]
-                raise GraylogError(f"Graylog API {response.status_code} at {path}: {detail}")
+                raise GraylogError(f"Graylog API returned HTTP {response.status_code} for {path}")
             result = response.json() if response.content else {}
             if self.audit:
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000)
+                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id)
             return result
         except Exception as exc:
             if self.audit:
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, status_code=getattr(locals().get("response", None), "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc))
+                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, status_code=getattr(locals().get("response", None), "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc), agent_id=agent_id)
             raise
 
     async def search_messages(self, query: str, minutes: int = 15, limit: int = 100, fields: list[str] | None = None):
@@ -55,7 +57,7 @@ class GraylogClient:
     async def aggregate(self, query: str, minutes: int = 60, group_by: list[dict[str, Any]] | None = None,
                         metrics: list[dict[str, Any]] | None = None, interval: str | None = None):
         body = {"query": query, "timerange": {"type": "relative", "range": max(60, minutes * 60)},
-                "group_by": group_by or [], "metrics": metrics or [{"function": "count", "id": "count"}],
+                "group_by": list(group_by or []), "metrics": list(metrics or [{"function": "count", "id": "count"}]),
                 }
         if interval:
             body["group_by"].append({"field": "timestamp", "timeunit": interval})

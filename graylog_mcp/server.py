@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import json
-import ipaddress
 import logging
-import base64
 import hmac
-import secrets
 import string
-import time
-from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -18,7 +13,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
@@ -27,17 +22,43 @@ from .config import Settings
 from .graylog import GraylogClient, GraylogError
 from .openai_agent import OpenAIAgent
 from .audit import AuditStore
+from .schemas import (
+    AgentCreate,
+    AgentUpdate,
+    AggregateRequest,
+    GraylogServerCreate,
+    GraylogServerTest,
+    GraylogServerUpdate,
+    QueryDefinitionInput,
+    SavedQueryRequest,
+    SearchRequest,
+    UIQueryRequest,
+    UISavedQueryRequest,
+)
+from .security import LoginThrottle, SessionStore, agent_context, ip_allowed, parse_networks, resolve_client_ip
 
 settings = Settings()
 logging.basicConfig(level=settings.log_level)
-audit = AuditStore(settings.audit_db_path, settings.audit_retention_days, settings.audit_max_rows, settings.audit_max_payload_chars)
+log = logging.getLogger(__name__)
+audit = AuditStore(
+    settings.audit_db_path,
+    settings.audit_retention_days,
+    settings.audit_max_rows,
+    settings.audit_max_payload_chars,
+    secret_encryption_key=settings.secret_encryption_key.get_secret_value() if settings.secret_encryption_key else None,
+    redact_fields=settings.audit_redacted_field_names,
+)
 clients: dict[int, GraylogClient] = {}
-agent_context: ContextVar[dict | None] = ContextVar("agent_context", default=None)
 bearer = HTTPBearer(auto_error=False)
 catalog = QueryCatalog(settings.query_catalog_path)
 UI_SESSION_COOKIE = "graylog_ui_session"
-UI_SESSION_TTL = 8 * 60 * 60
-ui_sessions: dict[str, float] = {}
+ui_sessions = SessionStore(settings.ui_session_ttl_seconds, settings.ui_max_sessions)
+login_throttle = LoginThrottle(
+    settings.ui_login_max_attempts,
+    settings.ui_login_window_seconds,
+    settings.ui_login_max_clients,
+)
+trusted_proxy_networks = parse_networks(settings.trusted_proxy_networks)
 
 TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "search_messages", "description": "Search Graylog messages using a Lucene query", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "minutes": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["query"]}}},
@@ -49,43 +70,17 @@ TOOL_SCHEMAS = [
 mcp = FastMCP("custom-graylog", host=settings.mcp_host, port=settings.mcp_port,
               streamable_http_path=settings.mcp_path)
 
-class SearchRequest(BaseModel):
-    query: str = Field(..., description="Graylog Lucene query")
-    minutes: int = Field(15, ge=1, description="Relative time window in minutes")
-    limit: int | None = Field(None, ge=1, description="Maximum number of messages")
-    fields: list[str] | None = None
-
-class AggregateRequest(BaseModel):
-    query: str = Field(..., description="Graylog Lucene query")
-    minutes: int = Field(60, ge=1)
-    group_by: list[dict[str, Any]] = Field(default_factory=list, description="Graylog group_by definitions")
-    metrics: list[dict[str, Any]] | None = None
-    interval: str | None = Field(None, description="Optional time bucket, for example 5m")
-
-class SavedQueryRequest(BaseModel):
-    name: str
-    parameters: dict[str, Any] = Field(default_factory=dict)
-
-class ServerRequest(BaseModel):
-    name: str
-    url: str
-    api_token: str
-    verify_tls: bool = True
-    timeout_seconds: float = Field(30, gt=0)
-
-class AgentRequest(BaseModel):
-    name: str
-    graylog_server_id: int
-    api_key: str | None = None
-
 @asynccontextmanager
 async def api_lifespan(_app):
     await audit.open()
     await audit.seed_queries(catalog.queries)
-    yield
-    await audit.close()
-    for graylog_client in clients.values(): await graylog_client.close()
-    clients.clear()
+    try:
+        yield
+    finally:
+        await audit.close()
+        for graylog_client in clients.values():
+            await graylog_client.close()
+        clients.clear()
 
 api = FastAPI(title="Custom Graylog MCP API", version="0.1.0",
               description="REST API for Graylog searches, aggregations and saved queries.", lifespan=api_lifespan)
@@ -118,33 +113,62 @@ async def get_client(server_id: int | None = None) -> GraylogClient:
         clients[int(selected_id)] = GraylogClient(settings, audit, server=server)
     return clients[int(selected_id)]
 
-def _agent_ip_allowed(remote_ip: str, allowed_ips: list[str]) -> bool:
-    if not allowed_ips: return True
-    try: address = ipaddress.ip_address(remote_ip)
-    except ValueError: return False
-    return any(address in ipaddress.ip_network(network, strict=False) for network in allowed_ips)
+def _client_ip(request: Request) -> str:
+    peer_ip = request.client.host if request.client else ""
+    return resolve_client_ip(peer_ip, request.headers.get("x-forwarded-for"), trusted_proxy_networks)
 
 async def require_agent(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
     if not credentials: raise HTTPException(status_code=401, detail="Bearer API key required")
     context = await audit.authenticate_agent(credentials.credentials)
     if not context: raise HTTPException(status_code=401, detail="Invalid or inactive agent API key")
-    if request and not _agent_ip_allowed(request.client.host if request.client else "", context.get("allowed_ips", [])):
+    if not ip_allowed(_client_ip(request), context.get("allowed_ips", [])):
         raise HTTPException(status_code=403, detail="Agent IP address is not allowed")
-    agent_context.set(context)
-    return context
+    token = agent_context.set(context)
+    try:
+        yield context
+    finally:
+        agent_context.reset(token)
 
 @api.middleware("http")
 async def mcp_authentication(request: Request, call_next):
+    response = None
     if request.url.path.startswith(settings.mcp_path):
         value = request.headers.get("authorization", "")
         context = await audit.authenticate_agent(value.split(" ", 1)[1].strip()) if value.lower().startswith("bearer ") else None
-        if not context: return PlainTextResponse("Valid agent Bearer API key required", status_code=401)
-        if not _agent_ip_allowed(request.client.host if request.client else "", context.get("allowed_ips", [])):
-            return PlainTextResponse("Agent IP address is not allowed", status_code=403)
-        token = agent_context.set(context)
-        try: return await call_next(request)
-        finally: agent_context.reset(token)
-    return await call_next(request)
+        if not context:
+            response = PlainTextResponse("Valid agent Bearer API key required", status_code=401)
+        elif not ip_allowed(_client_ip(request), context.get("allowed_ips", [])):
+            response = PlainTextResponse("Agent IP address is not allowed", status_code=403)
+        else:
+            token = agent_context.set(context)
+            try:
+                response = await call_next(request)
+            finally:
+                agent_context.reset(token)
+    elif request.url.path.startswith("/ui/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        session_token = request.cookies.get(UI_SESSION_COOKIE)
+        if not ui_sessions.get(session_token):
+            response = _ui_unauthorized()
+        elif not ui_sessions.valid_csrf(session_token, request.headers.get("x-csrf-token")):
+            response = JSONResponse({"detail": "Invalid or missing CSRF token"}, status_code=403)
+        else:
+            response = await call_next(request)
+    elif request.url.path == "/logout" and request.method == "POST":
+        session_token = request.cookies.get(UI_SESSION_COOKIE)
+        if not ui_sessions.valid_csrf(session_token, request.headers.get("x-csrf-token")):
+            response = JSONResponse({"detail": "Invalid or missing CSRF token"}, status_code=403)
+        else:
+            response = await call_next(request)
+    else:
+        response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
+    if request.url.path == "/" or request.url.path.startswith(("/ui", "/login", "/logout")):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 @api.get("/health", tags=["System"])
 async def api_health():
@@ -163,7 +187,7 @@ async def api_streams(_agent=Depends(require_agent)):
     return await (await get_client()).streams()
 
 @api.get("/api/v1/queries", tags=["Saved queries"])
-async def api_queries():
+async def api_queries(_agent=Depends(require_agent)):
     return {"queries": await query_summaries()}
 
 @api.post("/api/v1/queries/run", tags=["Saved queries"])
@@ -177,8 +201,9 @@ async def api_run_query(body: SavedQueryRequest, _agent=Depends(require_agent)):
 @api.get("/api/v1/audit", tags=["Audit"])
 async def api_audit(q: str | None = Query(None, description="FTS5 fulltext expression"), source: str | None = None,
                     limit: int = Query(25, ge=1, le=500), page: int = Query(1, ge=1), _agent=Depends(require_agent)):
-    total = await audit.count_recent(q, source)
-    return {"items": await audit.recent(limit, q, source, (page - 1) * limit),
+    agent_id = int(_agent["agent_id"])
+    total = await audit.count_recent(q, source, agent_id)
+    return {"items": await audit.recent(limit, q, source, (page - 1) * limit, agent_id),
             "total": total, "page": page, "page_size": limit,
             "pages": max(1, (total + limit - 1) // limit)}
 
@@ -300,7 +325,7 @@ for _section_id in ("graylogSection", "clientsSection", "queriesSection"):
     _replacement = MANAGEMENT_SECTIONS_HTML.split('\n')[("graylogSection", "clientsSection", "queriesSection").index(_section_id)]
     UI_HTML = UI_HTML[:_section_start] + _replacement + UI_HTML[_section_end:]
 
-MANAGEMENT_MODAL_HTML = """<div id="editModal" class="modal-backdrop" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><h2 id="modalTitle">Edit</h2><button class="modal-close" onclick="requestCloseModal()" aria-label="Close">×</button></div><form id="editForm" onsubmit="return submitModal(event)"><div id="modalFields"></div><div id="modalStatus" class="muted status-message"></div><div class="modal-actions"><button type="button" class="secondary" id="testModalButton" onclick="testModalServer()" hidden>Test connection</button><button type="button" class="secondary" onclick="requestCloseModal()">Cancel</button><button type="submit" id="modalSaveButton">Save</button></div></form></div></div><div id="discardModal" class="modal-backdrop confirm-backdrop" hidden><div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="discardTitle"><h2 id="discardTitle">Discard unsaved changes?</h2><p class="muted">You have changed one or more fields. Do you want to discard these changes?</p><div class="modal-actions"><button type="button" class="secondary" onclick="cancelDiscard()">Continue editing</button><button type="button" class="danger" onclick="confirmDiscard()">Discard changes</button></div></div></div><div id="deleteModal" class="modal-backdrop confirm-backdrop" hidden><div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="deleteTitle"><h2 id="deleteTitle">Delete record?</h2><p id="deleteMessage" class="muted"></p><div class="modal-actions"><button type="button" class="secondary" onclick="cancelDelete()">Cancel</button><button type="button" class="danger" onclick="confirmDelete()">Delete</button></div></div></div><div id="logoutModal" class="modal-backdrop confirm-backdrop logout-backdrop" hidden><div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="logoutTitle"><h2 id="logoutTitle">Sign out?</h2><p class="muted">Are you sure you want to sign out of the WebUI?</p><div class="modal-actions"><button type="button" class="secondary" onclick="cancelLogout()">Cancel</button><a class="danger logout-confirm" href="/logout" onclick="confirmLogout()">Sign out</a></div></div></div>"""
+MANAGEMENT_MODAL_HTML = """<div id="editModal" class="modal-backdrop" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><h2 id="modalTitle">Edit</h2><button class="modal-close" onclick="requestCloseModal()" aria-label="Close">×</button></div><form id="editForm" onsubmit="return submitModal(event)"><div id="modalFields"></div><div id="modalStatus" class="muted status-message"></div><div class="modal-actions"><button type="button" class="secondary" id="testModalButton" onclick="testModalServer()" hidden>Test connection</button><button type="button" class="secondary" onclick="requestCloseModal()">Cancel</button><button type="submit" id="modalSaveButton">Save</button></div></form></div></div><div id="discardModal" class="modal-backdrop confirm-backdrop" hidden><div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="discardTitle"><h2 id="discardTitle">Discard unsaved changes?</h2><p class="muted">You have changed one or more fields. Do you want to discard these changes?</p><div class="modal-actions"><button type="button" class="secondary" onclick="cancelDiscard()">Continue editing</button><button type="button" class="danger" onclick="confirmDiscard()">Discard changes</button></div></div></div><div id="deleteModal" class="modal-backdrop confirm-backdrop" hidden><div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="deleteTitle"><h2 id="deleteTitle">Delete record?</h2><p id="deleteMessage" class="muted"></p><div class="modal-actions"><button type="button" class="secondary" onclick="cancelDelete()">Cancel</button><button type="button" class="danger" onclick="confirmDelete()">Delete</button></div></div></div><div id="logoutModal" class="modal-backdrop confirm-backdrop logout-backdrop" hidden><div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="logoutTitle"><h2 id="logoutTitle">Sign out?</h2><p id="logoutMessage" class="muted">Are you sure you want to sign out of the WebUI?</p><div class="modal-actions"><button type="button" class="secondary" onclick="cancelLogout()">Cancel</button><button type="button" class="danger logout-confirm" onclick="confirmLogout()">Sign out</button></div></div></div>"""
 UI_HTML = UI_HTML.replace('</main><script>', '</main>' + MANAGEMENT_MODAL_HTML + '<script>')
 
 AGENT_JS = """async function loadAgents(){let r=await fetch('/ui/api/agents');let d=await r.json();agentItems=d.items||[];$(\"agentId\").innerHTML=agentItems.map(x=>`<option value=\"${x.id}\">${x.name} — ${x.graylog_server_name}</option>`).join(\"\");$(\"agentServer\").innerHTML=serverItems.map(x=>`<option value=\"${x.id}\">${x.name} (${x.url})</option>`).join(\"\");selectAgent()}function selectAgent(){let a=agentItems.find(x=>x.id===+$('agentId').value);if(!a){newAgent();return}$('agentName').value=a.name;$('agentServer').value=a.graylog_server_id;$('agentActive').value=a.active?'true':'false';$('agentKey').value=''}function newAgent(){$('agentId').value='';$('agentName').value='';$('agentServer').value=serverItems[0]?.id||'';$('agentActive').value='true';$('agentKey').value='';$('agentOut').textContent='Enter the client details and click Add client.'}async function saveAgent(){let b={agent_id:+$('agentId').value,name:$('agentName').value.trim(),graylog_server_id:+$('agentServer').value,active:$('agentActive').value==='true'};if($('agentKey').value)b.api_key=$('agentKey').value;let r=await fetch('/ui/api/agents',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});$('agentOut').textContent=JSON.stringify(await r.json(),null,2);if(r.ok)await loadAgents()}async function deleteAgent(){let id=+$('agentId').value;if(!id)return;$('agentOut').textContent=JSON.stringify(await (await fetch('/ui/api/agents?id='+id,{method:'DELETE'})).json(),null,2);await loadAgents()}"""
@@ -389,68 +414,89 @@ FILTER_JS = r'''let queryFilters={};function toggleQueryFilter(key){let pop=$('q
 TABLE_FILTER_JS = r'''let tableFilters={servers:{},agents:{}};function toggleTableFilter(table,key){let pop=$('tableFilter-'+table+'-'+key);pop.hidden=!pop.hidden}function applyTableFilter(table,key){let value=$('tableFilterValue-'+table+'-'+key).value.trim(),mode=$('tableFilterMode-'+table+'-'+key).value;if(value)tableFilters[table][key]={value:value.toLocaleLowerCase(),mode:mode};else delete tableFilters[table][key];if(table==='servers')renderServers();else renderAgents()}function clearTableFilter(table,key){delete tableFilters[table][key];if(table==='servers')renderServers();else renderAgents()}function tableFilterHeader(label,table,key){let active=tableFilters[table][key];return `<th><div class="filter-header"><span>${label}</span><button class="filter-button ${active?'active':''}" onclick="event.stopPropagation();toggleTableFilter('${table}','${key}')" aria-label="Filter ${label}">▽</button><div id="tableFilter-${table}-${key}" class="filter-popover" hidden onclick="event.stopPropagation()"><label for="tableFilterMode-${table}-${key}">Condition</label><select id="tableFilterMode-${table}-${key}"><option value="contains" ${active?.mode==='contains'||!active?'selected':''}>Contains</option><option value="equals" ${active?.mode==='equals'?'selected':''}>Equals</option></select><label for="tableFilterValue-${table}-${key}">Value</label><input id="tableFilterValue-${table}-${key}" value="${active?uiEscape(active.value):''}" onkeydown="if(event.key==='Enter')applyTableFilter('${table}','${key}')"><div class="filter-actions"><button type="button" class="secondary" onclick="clearTableFilter('${table}','${key}')">Clear</button><button type="button" onclick="applyTableFilter('${table}','${key}')">Apply</button></div></div></div></th>`}function tableFiltered(items,table){return items.filter(item=>Object.entries(tableFilters[table]).every(([key,filter])=>{let value=String(item[key]??'').toLocaleLowerCase();return filter.mode==='equals'?value===filter.value:value.includes(filter.value)}))}function renderServers(){if(!serverItems.length){$('serversOut').innerHTML='<p class="audit-empty muted">No Graylog servers configured.</p>';return}let items=tableFiltered(serverItems,'servers');$('serversOut').innerHTML='<table class="audit-table"><thead><tr>'+tableFilterHeader('Name','servers','name')+tableFilterHeader('URL','servers','url')+tableFilterHeader('TLS','servers','verify_tls')+tableFilterHeader('Timeout','servers','timeout_seconds')+'<th>Created</th><th>Actions</th></tr></thead><tbody>'+items.map(s=>`<tr class="table-row" ondblclick="openServerModal(serverItems.find(x=>x.id===${s.id}))"><td><strong>${uiEscape(s.name)}</strong></td><td>${uiEscape(s.url)}</td><td>${s.verify_tls?'Enabled':'Disabled'}</td><td>${uiEscape(s.timeout_seconds)} s</td><td>${uiEscape(s.created_at)}</td><td class="row-actions"><button class="secondary" onclick="event.stopPropagation();openServerModal(serverItems.find(x=>x.id===${s.id}))">Edit</button><button class="secondary" onclick="event.stopPropagation();deleteServerItem(${s.id})">Delete</button></td></tr>`).join('')+'</tbody></table>'}function renderAgents(){if(!agentItems.length){$('agentsOut').innerHTML='<p class="audit-empty muted">No MCP clients configured.</p>';return}let items=tableFiltered(agentItems,'agents').map(a=>({...a,status:a.active?'Active':'Inactive'}));$('agentsOut').innerHTML='<table class="audit-table"><thead><tr>'+tableFilterHeader('Name','agents','name')+tableFilterHeader('Graylog server','agents','graylog_server_name')+tableFilterHeader('API key','agents','api_key_last4')+tableFilterHeader('Status','agents','status')+'<th>Created</th><th>Actions</th></tr></thead><tbody>'+items.map(a=>`<tr class="table-row" ondblclick="openAgentModal(agentItems.find(x=>x.id===${a.id}))"><td><strong>${uiEscape(a.name)}</strong></td><td>${uiEscape(a.graylog_server_name)}</td><td>••••${uiEscape(a.api_key_last4)}</td><td><span class="badge ${a.active?'active':'inactive'}">${a.active?'Active':'Inactive'}</span></td><td>${uiEscape(a.created_at)}</td><td class="row-actions"><button class="secondary" onclick="event.stopPropagation();openAgentModal(agentItems.find(x=>x.id===${a.id}))">Edit</button><button class="secondary" onclick="event.stopPropagation();deleteAgentItem(${a.id})">Delete</button></td></tr>`).join('')+'</tbody></table>'}loadServers();loadAgents();'''
 TABLE_FILTER_PATCH_JS = r'''function renderAgents(){if(!agentItems.length){$('agentsOut').innerHTML='<p class="audit-empty muted">No MCP clients configured.</p>';return}let items=tableFiltered(agentItems.map(a=>({...a,status:a.active?'Active':'Inactive'})),'agents');$('agentsOut').innerHTML='<table class="audit-table"><thead><tr>'+tableFilterHeader('Name','agents','name')+tableFilterHeader('Graylog server','agents','graylog_server_name')+tableFilterHeader('API key','agents','api_key_last4')+tableFilterHeader('Status','agents','status')+'<th>Created</th><th>Actions</th></tr></thead><tbody>'+items.map(a=>`<tr class="table-row" ondblclick="openAgentModal(agentItems.find(x=>x.id===${a.id}))"><td><strong>${uiEscape(a.name)}</strong></td><td>${uiEscape(a.graylog_server_name)}</td><td>••••${uiEscape(a.api_key_last4)}</td><td><span class="badge ${a.active?'active':'inactive'}">${a.active?'Active':'Inactive'}</span></td><td>${uiEscape(a.created_at)}</td><td class="row-actions"><button class="secondary" onclick="event.stopPropagation();openAgentModal(agentItems.find(x=>x.id===${a.id}))">Edit</button><button class="secondary" onclick="event.stopPropagation();deleteAgentItem(${a.id})">Delete</button></td></tr>`).join('')+'</tbody></table>'}loadAgents();'''
 FILTER_POSITION_JS = r'''function placeFilterPopover(pop){let button=pop.parentElement.querySelector('.filter-button'),rect=button.getBoundingClientRect();pop.hidden=false;let left=Math.min(rect.left,Math.max(8,window.innerWidth-pop.offsetWidth-8));pop.style.top=(rect.bottom+6)+'px';pop.style.left=left+'px'}function toggleQueryFilter(key){let pop=$('queryFilter-'+key);if(pop.hidden)placeFilterPopover(pop);else pop.hidden=true}function toggleTableFilter(table,key){let pop=$('tableFilter-'+table+'-'+key);if(pop.hidden)placeFilterPopover(pop);else pop.hidden=true}'''
-LOGOUT_JS = r'''function openLogoutConfirm(){$('logoutModal').hidden=false;document.body.style.overflow='hidden'}function cancelLogout(){$('logoutModal').hidden=true;document.body.style.overflow=''}function confirmLogout(){$('logoutModal').hidden=true;document.body.style.overflow='';return true}'''
+LOGOUT_JS = r'''function openLogoutConfirm(){$('logoutMessage').textContent='Are you sure you want to sign out of the WebUI?';$('logoutModal').hidden=false;document.body.style.overflow='hidden'}function cancelLogout(){$('logoutModal').hidden=true;document.body.style.overflow=''}async function confirmLogout(){let r=await fetch('/logout',{method:'POST'});if(r.ok){location.assign('/login');return}$('logoutMessage').textContent='Sign out failed. Please try again.'}'''
 AUDIT_FILTER_JS = r'''let auditFilterData=null,auditFilters={};function toggleAuditFilter(key){let pop=$('auditFilter-'+key);if(pop.hidden)placeFilterPopover(pop);else pop.hidden=true}function applyAuditFilter(key){let value=$('auditFilterValue-'+key).value.trim(),mode=$('auditFilterMode-'+key).value;if(value)auditFilters[key]={value:value.toLocaleLowerCase(),mode:mode};else delete auditFilters[key];renderAudit(auditFilterData)}function clearAuditFilter(key){delete auditFilters[key];renderAudit(auditFilterData)}function auditFilterHeader(label,key){let active=auditFilters[key];return `<th><div class="filter-header"><span>${label}</span><button class="filter-button ${active?'active':''}" onclick="event.stopPropagation();toggleAuditFilter('${key}')" aria-label="Filter ${label}">▽</button><div id="auditFilter-${key}" class="filter-popover" hidden onclick="event.stopPropagation()"><label for="auditFilterMode-${key}">Condition</label><select id="auditFilterMode-${key}"><option value="contains" ${active?.mode==='contains'||!active?'selected':''}>Contains</option><option value="equals" ${active?.mode==='equals'?'selected':''}>Equals</option></select><label for="auditFilterValue-${key}">Value</label><input id="auditFilterValue-${key}" value="${active?auditEscape(active.value):''}" onkeydown="if(event.key==='Enter')applyAuditFilter('${key}')"><div class="filter-actions"><button type="button" class="secondary" onclick="clearAuditFilter('${key}')">Clear</button><button type="button" onclick="applyAuditFilter('${key}')">Apply</button></div></div></div></th>`}function renderAudit(data){auditFilterData=data;if(!data)return;let filtered=(data.items||[]).filter(item=>Object.entries(auditFilters).every(([key,filter])=>{let value=String(key==='result'?(item.success?'Success':'Failed'):item[key]??'').toLocaleLowerCase();return filter.mode==='equals'?value===filter.value:value.includes(filter.value)}));auditPage=data.page||1;let pages=data.pages||1;$('auditSummary').textContent=`${data.total||0} records`;$('auditPageInfo').textContent=`Page ${auditPage} of ${pages}`;$('auditPrev').disabled=auditPage<=1;$('auditNext').disabled=auditPage>=pages;if(!filtered.length){$('auditOut').innerHTML='<p class="audit-empty muted">No audit records found.</p>';return}$('auditOut').innerHTML='<table class="audit-table"><thead><tr><th>ID</th><th>Created</th>'+auditFilterHeader('Source','source')+auditFilterHeader('Operation','operation')+'<th>Status</th><th>Duration</th>'+auditFilterHeader('Result','result')+'<th>Details</th></tr></thead><tbody>'+filtered.map(item=>`<tr><td>${auditEscape(item.id)}</td><td>${auditEscape(item.created_at)}</td><td>${auditEscape(item.source)}</td><td>${auditEscape(item.operation)}</td><td>${item.success?'✓ Success':'✗ Failed'}${item.status_code?`<br><small>${auditEscape(item.status_code)}</small>`:''}</td><td>${item.duration_ms===null||item.duration_ms===undefined?'—':auditEscape(Number(item.duration_ms).toFixed(1)+' ms')}</td><td class="${item.success?'success':'failed'}">${item.success?'Success':'Failed'}</td><td><details class="audit-detail"><summary>Request / response${item.error?' / error':''}</summary>${item.request_json?`<strong>Request</strong><pre>${auditJson(item.request_json)}</pre>`:''}${item.response_json?`<strong>Response</strong><pre>${auditJson(item.response_json)}</pre>`:''}${item.error?`<strong>Error</strong><pre>${auditEscape(item.error)}</pre>`:''}</details></td></tr>`).join('')+'</tbody></table>'}'''
 UI_HTML = UI_HTML.replace('</style>', '.filter-popover{position:fixed} </style>', 1)
 AUDIT_DEDUP_JS = r'''const _renderAuditWithStatus=renderAudit;renderAudit=function(data){_renderAuditWithStatus(data);const table=document.querySelector('#auditOut table');if(!table)return;const headers=[...table.querySelectorAll('thead th')];const statusIndex=headers.findIndex(x=>x.textContent.trim()==='Status');if(statusIndex>=0)table.querySelectorAll('tr').forEach(row=>row.children[statusIndex]?.remove())}'''
 NAVIGATION_FIX_JS = r'''document.querySelectorAll('.nav-links a[data-section]').forEach(link=>{link.onclick=e=>{e.preventDefault();history.replaceState(null,'','#'+link.getAttribute('href').slice(1));showSection(link.dataset.section)}});showSection(location.hash==='#clients'?'clientsSection':location.hash==='#queries'?'queriesSection':location.hash==='#audit'?'auditSection':'graylogSection');'''
 AUDIT_INIT_JS = r'''if(location.hash==='#audit')loadAudit();'''
-UI_HTML = UI_HTML.replace('</script></body></html>', ';'.join((MANAGEMENT_JS, FILTER_JS, TABLE_FILTER_JS, TABLE_FILTER_PATCH_JS, FILTER_POSITION_JS, LOGOUT_JS, AUDIT_FILTER_JS, AUDIT_DEDUP_JS, NAVIGATION_FIX_JS, AUDIT_INIT_JS)) + '</script></body></html>')
+CSRF_JS = r'''const csrfToken=document.querySelector('meta[name="csrf-token"]')?.content||'';const originalFetch=window.fetch.bind(window);window.fetch=async function(input,init={}){const url=new URL(typeof input==='string'?input:input.url,location.href),method=String(init.method||(typeof input!=='string'&&input.method)||'GET').toUpperCase(),headers=new Headers(init.headers||(typeof input!=='string'?input.headers:undefined));if(url.origin===location.origin&&!['GET','HEAD','OPTIONS'].includes(method))headers.set('X-CSRF-Token',csrfToken);const response=await originalFetch(input,{...init,headers,credentials:'same-origin'});if(response.status===401&&url.pathname.startsWith('/ui/api/'))location.assign('/login');return response};'''
+UI_HTML = UI_HTML.replace('</script></body></html>', ';'.join((CSRF_JS, MANAGEMENT_JS, FILTER_JS, TABLE_FILTER_JS, TABLE_FILTER_PATCH_JS, FILTER_POSITION_JS, LOGOUT_JS, AUDIT_FILTER_JS, AUDIT_DEDUP_JS, NAVIGATION_FIX_JS, AUDIT_INIT_JS)) + '</script></body></html>')
 UI_HTML = UI_HTML.replace('<a class="help-link"', '<a class="logout-link" href="/logout" onclick="event.preventDefault();openLogoutConfirm()">Logout</a><a class="help-link"')
 UI_HTML = UI_HTML.replace('<a class="help-link" href="/ui/help" target="_blank" rel="noopener" title="Open UI documentation" aria-label="Open UI documentation">?</a>', '')
 UI_HTML = UI_HTML.replace('</style>', '.logout-link{color:#dbeafe;text-decoration:none;padding:.45rem .55rem;border-radius:5px}.logout-link:hover{background:#244f78}.logout-confirm{display:inline-block;color:#fff;text-decoration:none;padding:.55rem .8rem;border-radius:5px}.logout-backdrop{align-items:center;justify-content:center}.logout-backdrop .modal-card{height:auto;max-height:calc(100vh - 2rem);border-radius:10px} </style>', 1)
 UI_HTML = UI_HTML.replace('</style>', '.section-heading-actions{display:flex;align-items:center;gap:.65rem}.section-help{display:inline-flex;align-items:center;justify-content:center;width:1.8rem;height:1.8rem;box-sizing:border-box;border-radius:50%;background:#7c3aed;color:#fff;text-decoration:none;font-weight:700}.section-help:hover{background:#6d28d9}.audit-summary{display:none!important}body.dark .section-help{background:#8b5cf6;color:#fff}body.dark .section-help:hover{background:#7c3aed} </style>', 1)
 UI_HTML = UI_HTML.replace('</style>', '.table-toolbar{display:flex;justify-content:flex-end;align-items:center;margin:1rem 0 0}.table-toolbar button{margin:0} </style>', 1)
 UI_HTML = UI_HTML.replace('main{max-width:1100px;margin:2rem auto;padding:0 1rem}', 'main{max-width:1400px;margin:2rem auto;padding:0 1rem}')
+UI_HTML = UI_HTML.replace('</head>', '<meta name="csrf-token" content="__CSRF_TOKEN__"></head>', 1)
 NAVIGATION_BOOTSTRAP_HTML = """<script>(function(){function activate(id){document.querySelectorAll('.page-section').forEach(function(section){section.classList.toggle('active',section.id===id)});document.querySelectorAll('.nav-links a[data-section]').forEach(function(link){link.classList.toggle('active',link.dataset.section===id)});var menu=document.getElementById('navLinks');if(menu)menu.classList.remove('open')}function fromHash(){var hash=location.hash;activate(hash==='#clients'?'clientsSection':hash==='#queries'?'queriesSection':hash==='#audit'?'auditSection':'graylogSection')}document.addEventListener('click',function(event){var link=event.target.closest&&event.target.closest('.nav-links a[data-section]');if(!link)return;event.preventDefault();history.replaceState(null,'','#'+link.getAttribute('href').slice(1));activate(link.dataset.section);if(typeof window.showSection==='function')window.showSection(link.dataset.section)},true);window.addEventListener('hashchange',fromHash);fromHash()})();</script>"""
 UI_HTML = UI_HTML.replace('</body></html>', NAVIGATION_BOOTSTRAP_HTML + '</body></html>')
 
 def _ui_authorized(request: Request) -> bool:
-    token = request.cookies.get(UI_SESSION_COOKIE)
-    expires_at = ui_sessions.get(token or "")
-    if not expires_at: return False
-    if expires_at <= time.time():
-        ui_sessions.pop(token, None)
-        return False
-    return True
+    return ui_sessions.get(request.cookies.get(UI_SESSION_COOKIE)) is not None
 
 def _ui_unauthorized():
     return PlainTextResponse("Authentication required", status_code=401)
 
+def _request_error(exc: Exception, fallback: str = "Request could not be processed") -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    if isinstance(exc, ValidationError):
+        error = exc.errors(include_url=False, include_context=False, include_input=False)[0]
+        field = ".".join(str(item) for item in error.get("loc", ()))
+        detail = f"{field}: {error['msg']}" if field else error["msg"]
+        return JSONResponse({"detail": detail}, status_code=422)
+    if isinstance(exc, (ValueError, KeyError)):
+        return JSONResponse({"detail": str(exc).strip("'")}, status_code=400)
+    log.exception("Unhandled WebUI request error")
+    return JSONResponse({"detail": fallback}, status_code=400)
+
 LOGIN_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in — Graylog MCP</title><style>body{font-family:system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f7fa;color:#17202a}.login-card{width:min(380px,calc(100% - 2rem));background:#fff;border:1px solid #d9e0e7;border-radius:10px;padding:2rem;box-shadow:0 8px 24px #0002}h1{margin:0 0 .35rem;color:#102a43;font-size:1.5rem}p{color:#64748b;margin:.25rem 0 1.5rem}label{display:block;font-weight:600;margin:.9rem 0 .25rem}input,button{font:inherit;box-sizing:border-box;width:100%;padding:.65rem;border:1px solid #b8c3ce;border-radius:5px}button{margin-top:1.25rem;background:#2563eb;color:#fff;border:0;cursor:pointer}.error{color:#b91c1c;background:#fef2f2;border-radius:5px;padding:.65rem;margin-bottom:1rem}@media(prefers-color-scheme:dark){body{background:#071426;color:#e5eefb}.login-card{background:#0d2138;border-color:#1e456d}h1{color:#e5eefb}p{color:#9db4cc}input{background:#102b48;color:#e5eefb;border-color:#32618e}.error{background:#451a1a;color:#fecaca}}</style></head><body><main class="login-card"><h1>Graylog MCP</h1><p>Sign in to the WebUI</p>{error}<form method="post" action="/login"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required autofocus><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form></main></body></html>"""
 
-def _login_page(error: str = "") -> HTMLResponse:
+def _login_page(error: str = "", *, status_code: int = 200) -> HTMLResponse:
     message = f'<div class="error">{error}</div>' if error else ""
-    return HTMLResponse(LOGIN_HTML.replace("{error}", message))
+    return HTMLResponse(LOGIN_HTML.replace("{error}", message), status_code=status_code)
 
 @mcp.custom_route("/login", methods=["GET", "POST"])
 async def ui_login(request: Request):
     if request.method == "GET":
         return RedirectResponse("/", status_code=303) if _ui_authorized(request) else _login_page()
+    client_ip = _client_ip(request)
+    if not login_throttle.allowed(client_ip):
+        return _login_page("Too many failed sign-in attempts. Try again later.", status_code=429)
     body = (await request.body()).decode("utf-8", errors="replace")
     from urllib.parse import parse_qs
     form = parse_qs(body)
     username = form.get("username", [""])[0]
     password = form.get("password", [""])[0]
-    if not (hmac.compare_digest(username, settings.ui_username) and hmac.compare_digest(password, settings.ui_password)):
+    expected_password = settings.ui_password.get_secret_value()
+    username_matches = hmac.compare_digest(username, settings.ui_username)
+    password_matches = hmac.compare_digest(password, expected_password)
+    if not (username_matches and password_matches):
+        login_throttle.register_failure(client_ip)
         return _login_page("Invalid username or password.")
-    token = secrets.token_urlsafe(32)
-    ui_sessions[token] = time.time() + UI_SESSION_TTL
+    login_throttle.clear(client_ip)
+    ui_sessions.revoke(request.cookies.get(UI_SESSION_COOKIE))
+    token, _session = ui_sessions.create()
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie(UI_SESSION_COOKIE, token, max_age=UI_SESSION_TTL, httponly=True, samesite="lax", path="/")
+    response.set_cookie(UI_SESSION_COOKIE, token, max_age=settings.ui_session_ttl_seconds,
+                        httponly=True, secure=settings.ui_cookie_secure, samesite="strict", path="/")
     return response
 
-@mcp.custom_route("/logout", methods=["GET", "POST"])
+@mcp.custom_route("/logout", methods=["POST"])
 async def ui_logout(request: Request):
     token = request.cookies.get(UI_SESSION_COOKIE)
-    if token: ui_sessions.pop(token, None)
-    response = RedirectResponse("/login", status_code=303)
-    response.delete_cookie(UI_SESSION_COOKIE, path="/")
+    ui_sessions.revoke(token)
+    response = JSONResponse({"signed_out": True})
+    response.delete_cookie(UI_SESSION_COOKIE, path="/", secure=settings.ui_cookie_secure, samesite="strict")
     return response
 
 @mcp.custom_route("/", methods=["GET"])
 async def ui_home(request: Request):
-    return RedirectResponse("/login", status_code=303) if not _ui_authorized(request) else HTMLResponse(UI_HTML)
+    session = ui_sessions.get(request.cookies.get(UI_SESSION_COOKIE))
+    if not session:
+        return RedirectResponse("/login", status_code=303)
+    return HTMLResponse(UI_HTML.replace("__CSRF_TOKEN__", session.csrf_token))
 
 @mcp.custom_route("/ui/help", methods=["GET"])
 async def ui_help(request: Request):
@@ -461,57 +507,84 @@ async def ui_queries(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
     if request.method == "POST":
         try:
-            data = await request.json(); name = data.pop("name").strip()
-            if not name or not data.get("query"): raise ValueError("Name and query are required")
+            model = QueryDefinitionInput.model_validate(await request.json())
+            data = model.model_dump(); name = data.pop("name")
             return JSONResponse(await audit.save_query(name, data))
-        except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return _request_error(exc, "Query rule could not be saved")
     if request.method == "DELETE":
-        await audit.remove_query(request.query_params["name"]); return JSONResponse({"deleted": True})
+        try:
+            name = SavedQueryRequest(name=request.query_params.get("name", "")).name
+            await audit.remove_query(name)
+            return JSONResponse({"deleted": True})
+        except Exception as exc:
+            return _request_error(exc, "Query rule could not be deleted")
     return JSONResponse({"queries": await audit.list_queries()})
 
 @mcp.custom_route("/ui/api/query", methods=["POST"])
 async def ui_query(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
-    data = await request.json(); selected_client = await get_client(data.get("server_id"))
-    kind = "aggregate" if data.get("group_by") is not None else "search"
-    result = await selected_client.aggregate(data["query"], data.get("minutes", 60), data.get("group_by"), data.get("metrics")) if kind == "aggregate" else await selected_client.search_messages(data["query"], data.get("minutes", 15), data.get("limit", settings.graylog_default_limit))
-    return JSONResponse(result)
+    try:
+        data = UIQueryRequest.model_validate(await request.json())
+        selected_client = await get_client(data.server_id)
+        if data.group_by is not None:
+            result = await selected_client.aggregate(data.query, data.minutes, data.group_by, data.metrics, data.interval)
+        else:
+            result = await selected_client.search_messages(data.query, data.minutes, data.limit)
+        return JSONResponse(result)
+    except Exception as exc:
+        return _request_error(exc, "Graylog query could not be executed")
 
 @mcp.custom_route("/ui/api/saved", methods=["POST"])
 async def ui_saved(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
-    data = await request.json(); q = await render_saved_query(data["name"], data.get("parameters", {})); kind = q.get("type", "messages"); selected_client = await get_client(data.get("server_id"))
-    result = await selected_client.aggregate(q["query"], q.get("minutes", 60), q.get("group_by"), q.get("metrics"), q.get("interval")) if kind == "aggregate" else await selected_client.search_messages(q["query"], q.get("minutes", 15), q.get("limit", settings.graylog_default_limit), q.get("fields"))
-    return JSONResponse(result)
+    try:
+        data = UISavedQueryRequest.model_validate(await request.json())
+        q = await render_saved_query(data.name, data.parameters); kind = q.get("type", "messages")
+        selected_client = await get_client(data.server_id)
+        result = await selected_client.aggregate(q["query"], q.get("minutes", 60), q.get("group_by"), q.get("metrics"), q.get("interval")) if kind == "aggregate" else await selected_client.search_messages(q["query"], q.get("minutes", 15), q.get("limit", settings.graylog_default_limit), q.get("fields"))
+        return JSONResponse(result)
+    except Exception as exc:
+        return _request_error(exc, "Managed query could not be executed")
 
 @mcp.custom_route("/ui/api/streams", methods=["GET"])
 async def ui_streams(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
-    data = request.query_params.get("server_id")
-    return JSONResponse(await (await get_client(int(data) if data else None)).streams())
+    try:
+        server_id = int(request.query_params.get("server_id", ""))
+        if server_id <= 0: raise ValueError("A valid Graylog server is required")
+        return JSONResponse(await (await get_client(server_id)).streams())
+    except Exception as exc:
+        return _request_error(exc, "Graylog streams could not be loaded")
 
 @mcp.custom_route("/ui/api/servers", methods=["GET", "POST", "PUT", "DELETE"])
 async def ui_servers(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
     if request.method == "POST":
-        try: return JSONResponse(await audit.add_server(**(await request.json())), status_code=201)
-        except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
+        try:
+            data = GraylogServerCreate.model_validate(await request.json()).model_dump()
+            return JSONResponse(await audit.add_server(**data), status_code=201)
+        except Exception as exc:
+            return _request_error(exc, "Graylog server could not be created")
     if request.method == "PUT":
         try:
-            data = await request.json(); server_id = int(data.pop("server_id"))
+            data = GraylogServerUpdate.model_validate(await request.json()).model_dump(); server_id = data.pop("server_id")
             updated = await audit.update_server(server_id, **data)
             stale_client = clients.pop(server_id, None)
             if stale_client: await stale_client.close()
             return JSONResponse(updated)
-        except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return _request_error(exc, "Graylog server could not be updated")
     if request.method == "DELETE":
         try:
             server_id = int(request.query_params["id"])
+            if server_id <= 0: raise ValueError("A valid Graylog server is required")
             await audit.remove_server(server_id)
             stale_client = clients.pop(server_id, None)
             if stale_client: await stale_client.close()
             return JSONResponse({"deleted": True})
-        except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return _request_error(exc, "Graylog server could not be deleted")
     return JSONResponse({"items": await audit.list_servers()})
 
 def _safe_url(value: str) -> str:
@@ -528,34 +601,36 @@ def _safe_url(value: str) -> str:
 def _connection_error_message(exc: Exception, url: str) -> str:
     endpoint = _safe_url(url)
     if isinstance(exc, GraylogError):
-        return f"Graylog API returned an error.\nDetails: {exc}"
+        return f"Graylog API rejected the connection test for {endpoint}. Check the API token and Graylog permissions."
     if isinstance(exc, httpx.ConnectTimeout):
         return f"Connection to {endpoint} timed out.\nCheck that the server is reachable and increase Timeout (seconds) if needed."
     if isinstance(exc, httpx.ConnectError):
-        detail = str(exc.__cause__ or exc).strip()
-        if detail == "All connection attempts failed":
-            detail = "No TCP connection could be established; the host or port did not respond."
-        return f"Could not connect to {endpoint}.\nDetails: {detail}\nCheck the URL, DNS, port, and firewall."
+        return f"Could not connect to {endpoint}.\nCheck the URL, DNS, port, and firewall."
     if isinstance(exc, httpx.TimeoutException):
         return f"The request to {endpoint} timed out.\nCheck that Graylog is reachable and increase Timeout (seconds) if needed."
-    return f"Connection test failed for {endpoint}.\nError type: {type(exc).__name__}\nDetails: {exc}"
+    return f"Connection test failed for {endpoint}. Check the server configuration and application logs."
 
 @mcp.custom_route("/ui/api/servers/test", methods=["POST"])
 async def ui_test_server(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
-    data = await request.json(); temporary = None
+    temporary = None
     try:
-        stored = await audit.get_server(int(data["server_id"])) if data.get("server_id") else None
+        data = GraylogServerTest.model_validate(await request.json()).model_dump(exclude_none=True)
+        stored = await audit.get_server(data["server_id"]) if data.get("server_id") else None
         server = dict(stored or {})
         for field in ("url", "api_token", "verify_tls", "timeout_seconds"):
-            if data.get(field) not in (None, ""): server[field] = data[field]
+            if field in data: server[field] = data[field]
         if not server or not server.get("url") or not server.get("api_token"):
             return JSONResponse({"success": False, "message": "Enter a URL and Graylog API token."}, status_code=400)
         temporary = GraylogClient(settings, audit, server=server)
         result = await temporary.request("GET", "/api/cluster")
         return JSONResponse({"success": True, "message": "The Graylog API connection is working.", "cluster": result})
+    except ValidationError as exc:
+        return _request_error(exc, "Graylog connection could not be tested")
     except Exception as exc:
-        return JSONResponse({"success": False, "message": _connection_error_message(exc, server.get("url", data.get("url", "")))}, status_code=502)
+        endpoint = locals().get("server", {}).get("url", locals().get("data", {}).get("url", ""))
+        log.warning("Graylog connection test failed for %s", _safe_url(endpoint), exc_info=True)
+        return JSONResponse({"success": False, "message": _connection_error_message(exc, endpoint)}, status_code=502)
     finally:
         if temporary: await temporary.close()
 
@@ -564,16 +639,24 @@ async def ui_agents(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
     if request.method == "POST":
         try:
-            data = await request.json(); data["server_id"] = data.pop("graylog_server_id")
+            data = AgentCreate.model_validate(await request.json()).model_dump(); data["server_id"] = data.pop("graylog_server_id")
             return JSONResponse(await audit.add_agent(**data), status_code=201)
-        except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return _request_error(exc, "MCP client could not be created")
     if request.method == "PUT":
         try:
-            data = await request.json(); agent_id = int(data.pop("agent_id")); data["server_id"] = data.pop("graylog_server_id")
+            data = AgentUpdate.model_validate(await request.json()).model_dump(); agent_id = data.pop("agent_id"); data["server_id"] = data.pop("graylog_server_id")
             return JSONResponse(await audit.update_agent(agent_id, **data))
-        except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return _request_error(exc, "MCP client could not be updated")
     if request.method == "DELETE":
-        await audit.remove_agent(int(request.query_params["id"])); return JSONResponse({"deleted": True})
+        try:
+            agent_id = int(request.query_params.get("id", ""))
+            if agent_id <= 0: raise ValueError("A valid MCP client is required")
+            await audit.remove_agent(agent_id)
+            return JSONResponse({"deleted": True})
+        except Exception as exc:
+            return _request_error(exc, "MCP client could not be deleted")
     return JSONResponse({"items": await audit.list_agents()})
 
 async def execute(name: str, args: dict[str, Any]):
@@ -630,9 +713,21 @@ async def health(_request: Request):
 @mcp.custom_route("/ui/api/audit", methods=["GET"])
 async def ui_audit(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
-    try: limit = int(request.query_params.get("limit", "100"))
-    except ValueError: limit = 100
-    return JSONResponse({"items": await audit.recent(limit, request.query_params.get("q"), request.query_params.get("source"))})
+    try:
+        limit = min(max(1, int(request.query_params.get("limit", "25"))), 500)
+        page = max(1, int(request.query_params.get("page", "1")))
+    except ValueError:
+        return JSONResponse({"detail": "Page and limit must be integers"}, status_code=422)
+    search = request.query_params.get("q")
+    source = request.query_params.get("source")
+    total = await audit.count_recent(search, source)
+    return JSONResponse({
+        "items": await audit.recent(limit, search, source, (page - 1) * limit),
+        "total": total,
+        "page": page,
+        "page_size": limit,
+        "pages": max(1, (total + limit - 1) // limit),
+    })
 
 # Mount after all MCP tools and custom routes have been registered.
 api.mount("/", mcp.streamable_http_app())

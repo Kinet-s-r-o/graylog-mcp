@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from openai import AsyncOpenAI
 from .audit import AuditStore, stopwatch
+from .security import agent_context
 
 
 class OpenAIAgent:
@@ -18,6 +19,7 @@ class OpenAIAgent:
 
     async def ask(self, question: str, executor):
         started = stopwatch()
+        agent_id = (agent_context.get() or {}).get("agent_id")
         messages = [{"role": "system", "content": "You are a Graylog analyst. Use the available tools, state the time range and filters used, and return concise findings. Never invent log data."},
                     {"role": "user", "content": question}]
         for _ in range(self.max_rounds):
@@ -26,7 +28,7 @@ class OpenAIAgent:
             messages.append(msg.model_dump(exclude_none=True))
             if not msg.tool_calls:
                 answer = msg.content or "No answer returned by OpenAI."
-                if self.audit: await self.audit.record(source="openai", operation="ask_graylog", request={"question": question, "model": self.model}, response=answer, duration_ms=(stopwatch()-started)*1000)
+                if self.audit: await self.audit.record(source="openai", operation="ask_graylog", request={"question": question, "model": self.model}, response=answer, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id)
                 return answer
             for call in msg.tool_calls:
                 try:
@@ -36,5 +38,5 @@ class OpenAIAgent:
                     result = {"error": str(exc)}
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result, ensure_ascii=False, default=str)})
         answer = "OpenAI orchestration reached the configured tool-call limit."
-        if self.audit: await self.audit.record(source="openai", operation="ask_graylog", request={"question": question, "model": self.model}, response=answer, duration_ms=(stopwatch()-started)*1000, success=False, error=answer)
+        if self.audit: await self.audit.record(source="openai", operation="ask_graylog", request={"question": question, "model": self.model}, response=answer, duration_ms=(stopwatch()-started)*1000, success=False, error=answer, agent_id=agent_id)
         return answer

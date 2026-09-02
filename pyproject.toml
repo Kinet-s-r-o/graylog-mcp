@@ -11,11 +11,20 @@ dependencies = [
   "aiosqlite>=0.20.0,<1",
   "fastapi>=0.115.0,<1",
   "uvicorn[standard]>=0.30.0,<1",
-  "pydantic-settings>=2.7.0,<3"
+  "pydantic-settings>=2.7.0,<3",
+  "cryptography>=44.0.0,<46"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3.0,<9"
 ]
 
 [project.scripts]
 graylog-mcp = "graylog_mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["graylog_mcp*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
