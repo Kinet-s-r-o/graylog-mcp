@@ -105,10 +105,12 @@ class AuditStore:
         await self.db.execute("DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)", (self.max_rows,))
         await self.db.commit()
 
-    async def recent(self, limit: int = 100, search: str | None = None, source: str | None = None):
+    async def recent(self, limit: int = 100, search: str | None = None, source: str | None = None,
+                     offset: int = 0):
         if not self.db:
             return []
         limit = min(max(1, limit), 500)
+        offset = max(0, offset)
         if search:
             # FTS5 supports phrases, prefixes (term*) and boolean expressions.
             # If a user enters invalid FTS syntax, use a safe substring fallback.
@@ -116,23 +118,45 @@ class AuditStore:
                 sql = "SELECT a.id,a.created_at,a.source,a.operation,a.request_json,a.response_json,a.status_code,a.duration_ms,a.success,a.error FROM audit_log a JOIN audit_fts f ON f.rowid=a.id WHERE audit_fts MATCH ?"
                 args: list[Any] = [search]
                 if source: sql += " AND a.source = ?"; args.append(source)
-                sql += " ORDER BY a.id DESC LIMIT ?"; args.append(limit)
+                sql += " ORDER BY a.id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
                 cursor = await self.db.execute(sql, args)
             except Exception:
                 sql = "SELECT id,created_at,source,operation,request_json,response_json,status_code,duration_ms,success,error FROM audit_log WHERE (request_json LIKE ? OR response_json LIKE ? OR operation LIKE ? OR error LIKE ?)"
                 needle = f"%{search}%"; args = [needle] * 4
                 if source: sql += " AND source = ?"; args.append(source)
-                sql += " ORDER BY id DESC LIMIT ?"; args.append(limit)
+                sql += " ORDER BY id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
                 cursor = await self.db.execute(sql, args)
         else:
             sql = "SELECT id,created_at,source,operation,request_json,response_json,status_code,duration_ms,success,error FROM audit_log"
             args = []
             if source: sql += " WHERE source = ?"; args.append(source)
-            sql += " ORDER BY id DESC LIMIT ?"; args.append(limit)
+            sql += " ORDER BY id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
             cursor = await self.db.execute(sql, args)
         rows = await cursor.fetchall()
         columns = ["id", "created_at", "source", "operation", "request_json", "response_json", "status_code", "duration_ms", "success", "error"]
         return [dict(zip(columns, row)) for row in rows]
+
+    async def count_recent(self, search: str | None = None, source: str | None = None):
+        if not self.db:
+            return 0
+        if search:
+            try:
+                sql = "SELECT COUNT(*) FROM audit_log a JOIN audit_fts f ON f.rowid=a.id WHERE audit_fts MATCH ?"
+                args: list[Any] = [search]
+                if source: sql += " AND a.source = ?"; args.append(source)
+                cursor = await self.db.execute(sql, args)
+            except Exception:
+                sql = "SELECT COUNT(*) FROM audit_log WHERE (request_json LIKE ? OR response_json LIKE ? OR operation LIKE ? OR error LIKE ?)"
+                needle = f"%{search}%"; args = [needle] * 4
+                if source: sql += " AND source = ?"; args.append(source)
+                cursor = await self.db.execute(sql, args)
+        else:
+            sql = "SELECT COUNT(*) FROM audit_log"
+            args = []
+            if source: sql += " WHERE source = ?"; args.append(source)
+            cursor = await self.db.execute(sql, args)
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
 
     async def close(self):
         if self.db:
@@ -189,6 +213,29 @@ class AuditStore:
 
     async def remove_agent(self, agent_id: int):
         await self.db.execute("DELETE FROM agents WHERE id=?", (agent_id,)); await self.db.commit()
+
+    async def update_agent(self, agent_id: int, name: str, server_id: int, active: bool = True,
+                           api_key: str | None = None):
+        cursor = await self.db.execute("SELECT id FROM agents WHERE id=?", (agent_id,))
+        if not await cursor.fetchone():
+            raise ValueError("MCP client not found")
+        if api_key:
+            digest = hashlib.sha256(api_key.encode()).hexdigest()
+            await self.db.execute(
+                "UPDATE agents SET name=?,api_key_hash=?,api_key_last4=?,graylog_server_id=?,active=? WHERE id=?",
+                (name, digest, api_key[-4:], server_id, int(active), agent_id),
+            )
+        else:
+            await self.db.execute(
+                "UPDATE agents SET name=?,graylog_server_id=?,active=? WHERE id=?",
+                (name, server_id, int(active), agent_id),
+            )
+        await self.db.commit()
+        items = await self.list_agents()
+        result = next(item for item in items if item["id"] == agent_id)
+        if api_key:
+            result["api_key"] = api_key
+        return result
 
     async def authenticate_agent(self, api_key: str):
         digest = hashlib.sha256(api_key.encode()).hexdigest()

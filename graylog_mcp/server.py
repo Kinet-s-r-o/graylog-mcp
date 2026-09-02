@@ -159,8 +159,12 @@ async def api_run_query(body: SavedQueryRequest, _agent=Depends(require_agent)):
     return await (await get_client()).search_messages(q["query"], q.get("minutes", 15), q.get("limit", settings.graylog_default_limit), q.get("fields"))
 
 @api.get("/api/v1/audit", tags=["Audit"])
-async def api_audit(q: str | None = Query(None, description="FTS5 fulltext expression"), source: str | None = None, limit: int = Query(100, ge=1, le=500), _agent=Depends(require_agent)):
-    return {"items": await audit.recent(limit, q, source)}
+async def api_audit(q: str | None = Query(None, description="FTS5 fulltext expression"), source: str | None = None,
+                    limit: int = Query(25, ge=1, le=500), page: int = Query(1, ge=1), _agent=Depends(require_agent)):
+    total = await audit.count_recent(q, source)
+    return {"items": await audit.recent(limit, q, source, (page - 1) * limit),
+            "total": total, "page": page, "page_size": limit,
+            "pages": max(1, (total + limit - 1) // limit)}
 
 METRICS_REFERENCE_HTML = """<section><h2>Graylog Metrics JSON reference</h2><p>Use a JSON array. You can combine multiple metrics in one request. The <code>field</code> must be a numeric or otherwise suitable field from your Graylog messages, except for <code>count</code>. The optional <code>sort</code> value can be <code>asc</code> or <code>desc</code>.</p><table><tr><th>Function</th><th>Purpose</th><th>Example</th></tr><tr><td><code>count</code></td><td>Counts matching messages. No field is required.</td><td><code>[{"function":"count"}]</code></td></tr><tr><td><code>average</code></td><td>Arithmetic average of a numeric field.</td><td><code>[{"function":"average","field":"response_ms"}]</code></td></tr><tr><td><code>latest</code></td><td>Latest value of a field in the matching data.</td><td><code>[{"function":"latest","field":"status_code"}]</code></td></tr><tr><td><code>max</code></td><td>Highest value of a numeric field.</td><td><code>[{"function":"max","field":"response_ms"}]</code></td></tr><tr><td><code>min</code></td><td>Lowest value of a numeric field.</td><td><code>[{"function":"min","field":"response_ms"}]</code></td></tr><tr><td><code>percentile</code></td><td>Percentile of a numeric field; configure it in <code>configuration</code>.</td><td><code>[{"function":"percentile","field":"response_ms","configuration":{"percentile":95}}]</code></td></tr><tr><td><code>stdDev</code></td><td>Standard deviation of a numeric field.</td><td><code>[{"function":"stdDev","field":"response_ms"}]</code></td></tr><tr><td><code>sum</code></td><td>Total of a numeric field.</td><td><code>[{"function":"sum","field":"bytes"}]</code></td></tr><tr><td><code>sumOfSquares</code></td><td>Sum of squared values of a numeric field.</td><td><code>[{"function":"sumOfSquares","field":"response_ms"}]</code></td></tr><tr><td><code>variance</code></td><td>Variance of a numeric field.</td><td><code>[{"function":"variance","field":"response_ms"}]</code></td></tr></table><h3>Combined example</h3><pre>[{"function":"count","id":"requests"},{"function":"average","field":"response_ms","id":"avg_response"},{"function":"percentile","field":"response_ms","configuration":{"percentile":95},"id":"p95_response"},{"function":"max","field":"response_ms","id":"max_response"}]</pre><p class="muted">Metric support and field availability depend on the Graylog version and the fields present in your messages. If a metric fails, verify the function spelling and field type.</p></section>"""
 
@@ -199,6 +203,7 @@ DOCS_HTML = DOCS_HTML.replace(
 )
 
 DOCS_HTML = DOCS_HTML.replace('<section><h2>4. Run a Graylog query</h2>', METRICS_REFERENCE_HTML + '<section><h2>4. Run a Graylog query</h2>')
+DOCS_HTML = DOCS_HTML.replace('Each client is permanently restricted to one selected Graylog server.', 'Each client is restricted to one selected Graylog server and can later be reassigned in the UI.')
 
 UI_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -250,6 +255,18 @@ document.querySelectorAll('.nav-links a').forEach(x=>x.onclick=e=>{e.preventDefa
 showSection(location.hash==='#clients'?'clientsSection':location.hash==='#queries'?'queriesSection':location.hash==='#audit'?'auditSection':'graylogSection');loadServers();
 </script></body></html>"""
 
+CLIENTS_SECTION_HTML = """<section id="clientsSection" class="page-section"><h2>MCP Clients / Agents</h2><p class="muted">Clients are stored in SQLite and can be edited or reassigned to another Graylog server. The full API key is shown only after creation or when you explicitly replace it.</p><label>Existing client</label><select id="agentId" onchange="selectAgent()"></select><div class="grid"><div><label>Client name</label><input id="agentName" placeholder="monitoring-agent"></div><div><label>Assigned Graylog server</label><select id="agentServer"></select></div><div><label>New API key (optional)</label><input id="agentKey" type="password" placeholder="leave blank to keep the current key"></div><div><label>Status</label><select id="agentActive"><option value="true">Active</option><option value="false">Inactive</option></select></div></div><button onclick="addAgent()">Add client</button> <button class="secondary" onclick="saveAgent()">Save changes</button> <button class="secondary" onclick="newAgent()">New client</button> <button class="secondary" onclick="deleteAgent()">Delete client</button><pre id="agentOut">Select a client or create a new one.</pre></section>"""
+_clients_start = UI_HTML.index('<section id="clientsSection"')
+_clients_end = UI_HTML.index('</section>', _clients_start) + len('</section>')
+UI_HTML = UI_HTML[:_clients_start] + CLIENTS_SECTION_HTML + UI_HTML[_clients_end:]
+
+AUDIT_SECTION_HTML = """<section id="auditSection" class="page-section"><div class="section-heading"><div><h2>Audit Log</h2><p class="muted">Browse every recorded request and response. Open a row to inspect the complete payload and error details.</p></div><span id="auditSummary" class="audit-summary"></span></div><div class="grid"><div><label>Full-text search</label><input id="auditSearch" placeholder="for example: authentication OR timeout"></div><div><label>Source</label><select id="auditSource"><option value="">All sources</option><option>graylog</option><option>openai</option><option>mcp</option></select></div></div><div class="audit-actions"><button class="secondary" onclick="loadAudit(1)">Search audit log</button><label class="audit-page-size">Rows per page <select id="auditPageSize" onchange="loadAudit(1)"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label></div><div id="auditOut" class="audit-table-wrap"><p class="muted">Run a search to load audit records.</p></div><div class="audit-pagination"><button id="auditPrev" class="secondary" onclick="changeAuditPage(-1)">← Previous</button><span id="auditPageInfo" class="muted"></span><button id="auditNext" class="secondary" onclick="changeAuditPage(1)">Next →</button></div></section>"""
+_audit_start = UI_HTML.index('<section id="auditSection"')
+_audit_end = UI_HTML.index('</section>', _audit_start) + len('</section>')
+UI_HTML = UI_HTML[:_audit_start] + AUDIT_SECTION_HTML + UI_HTML[_audit_end:]
+
+AGENT_JS = """async function loadAgents(){let r=await fetch('/ui/api/agents');let d=await r.json();agentItems=d.items||[];$(\"agentId\").innerHTML=agentItems.map(x=>`<option value=\"${x.id}\">${x.name} — ${x.graylog_server_name}</option>`).join(\"\");$(\"agentServer\").innerHTML=serverItems.map(x=>`<option value=\"${x.id}\">${x.name} (${x.url})</option>`).join(\"\");selectAgent()}function selectAgent(){let a=agentItems.find(x=>x.id===+$('agentId').value);if(!a){newAgent();return}$('agentName').value=a.name;$('agentServer').value=a.graylog_server_id;$('agentActive').value=a.active?'true':'false';$('agentKey').value=''}function newAgent(){$('agentId').value='';$('agentName').value='';$('agentServer').value=serverItems[0]?.id||'';$('agentActive').value='true';$('agentKey').value='';$('agentOut').textContent='Enter the client details and click Add client.'}async function saveAgent(){let b={agent_id:+$('agentId').value,name:$('agentName').value.trim(),graylog_server_id:+$('agentServer').value,active:$('agentActive').value==='true'};if($('agentKey').value)b.api_key=$('agentKey').value;let r=await fetch('/ui/api/agents',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});$('agentOut').textContent=JSON.stringify(await r.json(),null,2);if(r.ok)await loadAgents()}async function deleteAgent(){let id=+$('agentId').value;if(!id)return;$('agentOut').textContent=JSON.stringify(await (await fetch('/ui/api/agents?id='+id,{method:'DELETE'})).json(),null,2);await loadAgents()}"""
+
 UI_HTML = UI_HTML.replace(
     'Template values use the <code>${name}</code> syntax.',
     'Values come from Default parameters JSON or run_saved_query parameters; call-time values override defaults. The direct query field does not substitute variables.'
@@ -259,6 +276,27 @@ UI_HTML = UI_HTML.replace(
     'Available functions with examples:<br><code>count</code>: <code>[{"function":"count"}]</code><br><code>average</code>: <code>[{"function":"average","field":"response_ms"}]</code><br><code>latest</code>: <code>[{"function":"latest","field":"status_code"}]</code><br><code>max</code>: <code>[{"function":"max","field":"response_ms"}]</code><br><code>min</code>: <code>[{"function":"min","field":"response_ms"}]</code><br><code>percentile</code>: <code>[{"function":"percentile","field":"response_ms","configuration":{"percentile":95}}]</code><br><code>stdDev</code>: <code>[{"function":"stdDev","field":"response_ms"}]</code><br><code>sum</code>: <code>[{"function":"sum","field":"bytes"}]</code><br><code>sumOfSquares</code>: <code>[{"function":"sumOfSquares","field":"response_ms"}]</code><br><code>variance</code>: <code>[{"function":"variance","field":"response_ms"}]</code>'
 )
 UI_HTML = UI_HTML.replace('width:260px;', 'width:420px;')
+for metric_name in ('average', 'latest', 'max', 'min', 'percentile', 'stdDev', 'sum', 'sumOfSquares', 'variance'):
+    UI_HTML = UI_HTML.replace(f'<br><code>{metric_name}</code>:', f'<br><br><code>{metric_name}</code>:')
+UI_HTML = UI_HTML.replace(
+    '<label>Metrics JSON (aggregation only)</label>',
+    '<label>Metrics JSON (aggregation only) <span class="field-help" tabindex="0" aria-label="Metrics JSON reference">?<span class="tooltip">Available functions with examples:<br><code>count</code> — messages: <code>[{"function":"count"}]</code><br><br><code>average</code> — numeric average: <code>[{"function":"average","field":"response_ms"}]</code><br><br><code>latest</code> — latest value: <code>[{"function":"latest","field":"status_code"}]</code><br><br><code>max</code> — highest value: <code>[{"function":"max","field":"response_ms"}]</code><br><br><code>min</code> — lowest value: <code>[{"function":"min","field":"response_ms"}]</code><br><br><code>percentile</code> — percentile: <code>[{"function":"percentile","field":"response_ms","configuration":{"percentile":95}}]</code><br><br><code>stdDev</code> — standard deviation: <code>[{"function":"stdDev","field":"response_ms"}]</code><br><br><code>sum</code> — numeric total: <code>[{"function":"sum","field":"bytes"}]</code><br><br><code>sumOfSquares</code> — squared total: <code>[{"function":"sumOfSquares","field":"response_ms"}]</code><br><br><code>variance</code> — variance: <code>[{"function":"variance","field":"response_ms"}]</code></span></span></label>'
+)
+UI_HTML = UI_HTML.replace(
+    'async function addAgent()',
+    AGENT_JS + 'async function addAgent()'
+)
+AUDIT_JS = """let auditPage=1;function auditEscape(value){return String(value??'—').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}function auditJson(value){if(value===null||value===undefined||value==='')return '—';try{return auditEscape(JSON.stringify(JSON.parse(value),null,2))}catch(e){return auditEscape(value)}}function renderAudit(data){auditPage=data.page||1;let pages=data.pages||1;$('auditSummary').textContent=`${data.total||0} records`;$('auditPageInfo').textContent=`Page ${auditPage} of ${pages}`;$('auditPrev').disabled=auditPage<=1;$('auditNext').disabled=auditPage>=pages;if(!data.items?.length){$('auditOut').innerHTML='<p class="audit-empty muted">No audit records found.</p>';return}$('auditOut').innerHTML='<table class="audit-table"><thead><tr><th>ID</th><th>Created</th><th>Source</th><th>Operation</th><th>Status</th><th>Duration</th><th>Result</th><th>Details</th></tr></thead><tbody>'+data.items.map(item=>`<tr><td>${auditEscape(item.id)}</td><td>${auditEscape(item.created_at)}</td><td>${auditEscape(item.source)}</td><td>${auditEscape(item.operation)}</td><td>${item.success?'✓ Success':'✗ Failed'}${item.status_code?`<br><small>${auditEscape(item.status_code)}</small>`:''}</td><td>${item.duration_ms===null||item.duration_ms===undefined?'—':auditEscape(Number(item.duration_ms).toFixed(1)+' ms')}</td><td class="${item.success?'success':'failed'}">${item.success?'Success':'Failed'}</td><td><details class="audit-detail"><summary>Request / response${item.error?' / error':''}</summary>${item.request_json?`<strong>Request</strong><pre>${auditJson(item.request_json)}</pre>`:''}${item.response_json?`<strong>Response</strong><pre>${auditJson(item.response_json)}</pre>`:''}${item.error?`<strong>Error</strong><pre>${auditEscape(item.error)}</pre>`:''}</details></td></tr>`).join('')+'</tbody></table>'}async function loadAudit(page=1){let p=new URLSearchParams({limit:$('auditPageSize').value,page});if($('auditSearch').value)p.set('q',$('auditSearch').value);if($('auditSource').value)p.set('source',$('auditSource').value);let r=await fetch('/ui/api/audit?'+p);let data=await r.json();if(!r.ok){$('auditOut').innerHTML=`<p class="audit-empty failed">${auditEscape(data.detail||'Audit log could not be loaded.')}</p>`;return}renderAudit(data)}function changeAuditPage(delta){loadAudit(auditPage+delta)}"""
+UI_HTML = UI_HTML.replace('async function loadAudit()', AUDIT_JS + 'async function loadAudit()')
+UI_HTML = UI_HTML.replace(
+    "$('agentOut').textContent=JSON.stringify(await r.json(),null,2)}",
+    "$('agentOut').textContent=JSON.stringify(await r.json(),null,2);await loadAgents()}"
+)
+UI_HTML = UI_HTML.replace(
+    "showSection(location.hash==='#clients'?'clientsSection':location.hash==='#queries'?'queriesSection':location.hash==='#audit'?'auditSection':'graylogSection');loadServers();",
+    "showSection(location.hash==='#clients'?'clientsSection':location.hash==='#queries'?'queriesSection':location.hash==='#audit'?'auditSection':'graylogSection');loadServers().then(loadAgents);"
+)
+UI_HTML = UI_HTML.replace('</style>', '.section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}.audit-summary{color:#64748b;font-size:.9rem;padding-top:.35rem}.audit-actions,.audit-pagination{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}.audit-page-size{display:flex;align-items:center;gap:.5rem;margin:0}.audit-page-size select{width:auto}.audit-table-wrap{overflow:auto;margin-top:1rem;border:1px solid #d9e0e7;border-radius:7px}.audit-table{width:100%;min-width:950px;border-collapse:collapse;font-size:.9rem}.audit-table th,.audit-table td{padding:.65rem .7rem;text-align:left;vertical-align:top;border-bottom:1px solid #d9e0e7}.audit-table th{background:#edf2f7;white-space:nowrap}.audit-table tr:last-child td{border-bottom:0}.audit-table .success{color:#15803d;font-weight:600}.audit-table .failed{color:#b91c1c;font-weight:600}.audit-detail{min-width:360px}.audit-detail summary{cursor:pointer;color:#2563eb}.audit-detail pre{min-height:0;margin:.5rem 0 0;font-size:.8rem;max-height:260px}.audit-empty{text-align:center;padding:2rem}.audit-pagination{margin-top:1rem}.audit-pagination button:disabled{opacity:.45;cursor:not-allowed}body.dark .audit-summary{color:#9db4cc}body.dark .audit-table-wrap{border-color:#1e456d}body.dark .audit-table th{background:#102b48}body.dark .audit-table td{border-color:#1e456d}@media(max-width:700px){.section-heading{display:block}.audit-summary{display:block;margin-bottom:.5rem}} </style>', 1)
 
 def _ui_authorized(request: Request) -> bool:
     value = request.headers.get("authorization", "")
@@ -374,13 +412,18 @@ async def ui_test_server(request: Request):
     finally:
         if temporary: await temporary.close()
 
-@mcp.custom_route("/ui/api/agents", methods=["GET", "POST", "DELETE"])
+@mcp.custom_route("/ui/api/agents", methods=["GET", "POST", "PUT", "DELETE"])
 async def ui_agents(request: Request):
     if not _ui_authorized(request): return _ui_unauthorized()
     if request.method == "POST":
         try:
             data = await request.json(); data["server_id"] = data.pop("graylog_server_id")
             return JSONResponse(await audit.add_agent(**data), status_code=201)
+        except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
+    if request.method == "PUT":
+        try:
+            data = await request.json(); agent_id = int(data.pop("agent_id")); data["server_id"] = data.pop("graylog_server_id")
+            return JSONResponse(await audit.update_agent(agent_id, **data))
         except Exception as exc: return JSONResponse({"detail": str(exc)}, status_code=400)
     if request.method == "DELETE":
         await audit.remove_agent(int(request.query_params["id"])); return JSONResponse({"deleted": True})
