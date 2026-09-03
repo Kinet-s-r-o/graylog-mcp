@@ -302,6 +302,9 @@ body.dark .theme {
   gap: 1rem;
   flex-wrap: wrap;
 }
+.audit-actions {
+  justify-content: flex-end;
+}
 .audit-page-size {
   display: flex;
   align-items: center;
