@@ -5,11 +5,12 @@ const csrfToken =
 let activeRequests = 0;
 
 export class ApiError extends Error {
-  constructor(message, status, code = "request_error") {
+  constructor(message, status, code = "request_error", details = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -57,10 +58,15 @@ export async function request(path, options = {}) {
     }
     const data = await decode(response);
     if (!response.ok) {
+      const details = data.detail;
+      const message = Array.isArray(details)
+        ? details.map((item) => item.msg || "Invalid value").join("; ")
+        : details || data.message || "Request failed.";
       throw new ApiError(
-        data.detail || data.message || "Request failed.",
+        message,
         response.status,
         data.code,
+        details,
       );
     }
     return data;

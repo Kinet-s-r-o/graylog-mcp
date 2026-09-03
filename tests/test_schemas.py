@@ -48,3 +48,8 @@ def test_query_rule_validates_interval_grouping_and_metrics():
         QueryDefinitionInput(name="bad", query="*", group_by=[{}])
     with pytest.raises(ValidationError):
         QueryDefinitionInput(name="bad", query="*", metrics=[{"function": "average"}])
+
+
+def test_query_rule_allows_empty_limit_for_aggregations():
+    rule = QueryDefinitionInput(name="total", type="aggregate", query="*", limit=None)
+    assert rule.limit is None

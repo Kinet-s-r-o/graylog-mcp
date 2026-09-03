@@ -59,7 +59,7 @@ class QueryService:
         return await client.search_messages(
             query["query"],
             query.get("minutes", 15),
-            query.get("limit", self.settings.graylog_default_limit),
+            query.get("limit") or self.settings.graylog_default_limit,
             query.get("fields"),
         )
 
@@ -74,4 +74,3 @@ class QueryService:
         if name == "run_saved_query":
             return await self.execute_saved(args["name"], args.get("parameters", {}))
         raise ValueError(f"Unsupported tool: {name}")
-

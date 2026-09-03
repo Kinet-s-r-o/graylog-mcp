@@ -33,10 +33,88 @@ function values() {
   ].map((item) => item.value);
 }
 
+const validationFields = {
+  name: { server: "mServerName", agent: "mAgentName", rule: "mRuleName" },
+  url: "mServerUrl",
+  api_token: "mServerToken",
+  timeout_seconds: "mServerTimeout",
+  verify_tls: "mServerTls",
+  graylog_server_id: "mAgentServer",
+  api_key: "mAgentKey",
+  allowed_ips: "mAgentAllowedIps",
+  active: "mAgentActive",
+  description: "mRuleDescription",
+  type: "mRuleType",
+  query: "mRuleQuery",
+  minutes: "mRuleMinutes",
+  limit: "mRuleLimit",
+  interval: "mRuleInterval",
+  group_by: "mRuleGroup",
+  metrics: "mRuleMetrics",
+  defaults: "mRuleDefaults",
+  instructions: "mRuleInstructions",
+};
+
+function clearFieldErrors() {
+  document
+    .querySelectorAll("#modalFields .field-error")
+    .forEach((field) => field.classList.remove("field-error"));
+  document
+    .querySelectorAll("#modalFields .field-error-message")
+    .forEach((message) => message.remove());
+}
+
+export function markFieldError(id, message) {
+  const field = $(id);
+  if (!field) return;
+  field.classList.add("field-error");
+  const label = document.querySelector(`label[for="${id}"]`);
+  if (!label) return;
+  if (label.nextElementSibling?.classList.contains("field-error-message")) {
+    label.nextElementSibling.remove();
+  }
+  const error = document.createElement("div");
+  error.className = "field-error-message";
+  error.textContent = message || field.validationMessage || "Invalid value";
+  label.insertAdjacentElement("afterend", error);
+}
+
+function fieldIdFor(kind, field) {
+  const mapped = validationFields[field];
+  if (typeof mapped === "string") return mapped;
+  return mapped?.[kind] || null;
+}
+
+function showValidationErrors(error) {
+  clearFieldErrors();
+  if (error.fieldId) {
+    markFieldError(error.fieldId, error.message);
+    return;
+  }
+  if (Array.isArray(error.details)) {
+    error.details.forEach((detail) => {
+      const field = detail.loc?.[detail.loc.length - 1];
+      const id = fieldIdFor(state.modal.kind, field);
+      if (id) markFieldError(id, detail.msg);
+    });
+  }
+}
+
+function readJson(id, label) {
+  try {
+    return JSON.parse($(id).value);
+  } catch {
+    const error = new Error(`${label} must contain valid JSON.`);
+    error.fieldId = id;
+    throw error;
+  }
+}
+
 function open(kind, title, fields, item = null) {
   state.modal = { kind, item, initialValues: [] };
   $("modalTitle").textContent = title;
   $("modalFields").innerHTML = fields;
+  clearFieldErrors();
   $("modalStatus").textContent = "";
   $("testModalButton").hidden = kind !== "server";
   $("editModal").hidden = false;
@@ -84,12 +162,31 @@ export function openAgent(item = null) {
 
 export function openRule(item = null) {
   const query = item || {};
+  const messageLimit =
+    query.type === "aggregate" ? (query.limit ?? "") : (query.limit ?? 100);
   open(
     "rule",
     item ? "Edit query rule" : "Add query rule",
-    `${field("Name", "mRuleName", query.name, "text", "errors_by_service", true)}${field("Description", "mRuleDescription", query.description || "", "text", "Count errors grouped by service")}<div class="grid"><div><label for="mRuleType">Type</label><select id="mRuleType"><option value="messages" ${query.type !== "aggregate" ? "selected" : ""}>Message search</option><option value="aggregate" ${query.type === "aggregate" ? "selected" : ""}>Aggregation</option></select></div>${field("Time range (minutes)", "mRuleMinutes", query.minutes || 60, "number")}${field("Message limit", "mRuleLimit", query.limit || 100, "number")}${field("Time bucket", "mRuleInterval", query.interval || "", "text", "5m")}</div>${textarea("Lucene query template", "mRuleQuery", query.query || "", true)}${textarea("Group by JSON", "mRuleGroup", JSON.stringify(query.group_by || [], null, 2))}${textarea("Metrics JSON", "mRuleMetrics", JSON.stringify(query.metrics || [{ function: "count" }], null, 2))}${textarea("Default parameters JSON", "mRuleDefaults", JSON.stringify(query.defaults || {}, null, 2))}${textarea("Instructions for the agent", "mRuleInstructions", query.instructions || "")}`,
+    `${field("Name", "mRuleName", query.name, "text", "errors_by_service", true)}${field("Description", "mRuleDescription", query.description || "", "text", "Count errors grouped by service")}<div class="grid"><div><label for="mRuleType">Type</label><select id="mRuleType"><option value="messages" ${query.type !== "aggregate" ? "selected" : ""}>Message search</option><option value="aggregate" ${query.type === "aggregate" ? "selected" : ""}>Aggregation</option></select></div>${field("Time range (minutes)", "mRuleMinutes", query.minutes || 60, "number")}<div id="messageLimitField">${field("Message limit", "mRuleLimit", messageLimit, "number")}</div>${field("Time bucket", "mRuleInterval", query.interval || "", "text", "5m")}</div>${textarea("Lucene query template", "mRuleQuery", query.query || "", true)}${textarea("Group by JSON", "mRuleGroup", JSON.stringify(query.group_by || [], null, 2))}${textarea("Metrics JSON", "mRuleMetrics", JSON.stringify(query.metrics || [{ function: "count" }], null, 2))}${textarea("Default parameters JSON", "mRuleDefaults", JSON.stringify(query.defaults || {}, null, 2))}${textarea("Instructions for the agent", "mRuleInstructions", query.instructions || "")}`,
     item,
   );
+  syncMessageLimitField();
+}
+
+function syncMessageLimitField() {
+  const type = $("mRuleType");
+  const field = $("mRuleLimit");
+  const wrapper = $("messageLimitField");
+  if (!type || !field || !wrapper) return;
+  const aggregate = type.value === "aggregate";
+  wrapper.hidden = aggregate;
+  field.disabled = aggregate;
+  field.required = !aggregate;
+  field.setAttribute("aria-required", String(!aggregate));
+}
+
+export function ruleTypeChanged() {
+  syncMessageLimitField();
 }
 
 export function requestClose() {
@@ -175,6 +272,7 @@ export async function testServer() {
 
 export async function submit(event) {
   event.preventDefault();
+  clearFieldErrors();
   const { kind, item } = state.modal;
   try {
     let result;
@@ -197,18 +295,22 @@ export async function submit(event) {
       result = await api.saveAgent(payload, Boolean(item));
       await refresh.agents();
     } else {
-      result = await api.saveQuery({
+      const type = $("mRuleType").value;
+      const payload = {
         name: $("mRuleName").value.trim(),
         description: $("mRuleDescription").value,
-        type: $("mRuleType").value,
+        type,
         query: $("mRuleQuery").value,
         minutes: Number($("mRuleMinutes").value),
-        limit: Number($("mRuleLimit").value),
         interval: $("mRuleInterval").value,
-        group_by: JSON.parse($("mRuleGroup").value),
-        metrics: JSON.parse($("mRuleMetrics").value),
-        defaults: JSON.parse($("mRuleDefaults").value),
+        group_by: readJson("mRuleGroup", "Group by JSON"),
+        metrics: readJson("mRuleMetrics", "Metrics JSON"),
+        defaults: readJson("mRuleDefaults", "Default parameters JSON"),
         instructions: $("mRuleInstructions").value,
+      };
+      if (type !== "aggregate") payload.limit = Number($("mRuleLimit").value);
+      result = await api.saveQuery({
+        ...payload,
       });
       await refresh.queries();
     }
@@ -221,6 +323,7 @@ export async function submit(event) {
     close();
     notify("Changes saved.", "success");
   } catch (error) {
+    showValidationErrors(error);
     $("modalStatus").textContent = `✗ ${error.message}`;
     $("modalStatus").className = "status-message failed";
   }

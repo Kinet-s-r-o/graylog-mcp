@@ -14,6 +14,8 @@ import {
   openDelete,
   openLogout,
   openRule,
+  markFieldError,
+  ruleTypeChanged,
   openServer,
   requestClose,
   submit,
@@ -203,7 +205,18 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+document.addEventListener(
+  "invalid",
+  (event) => {
+    if (event.target.closest("#editForm")) {
+      markFieldError(event.target.id, event.target.validationMessage);
+    }
+  },
+  true,
+);
+
 document.addEventListener("change", (event) => {
+  if (event.target.id === "mRuleType") ruleTypeChanged();
   const control = event.target.closest('[data-action^="audit-"]');
   if (control) actions[control.dataset.action]?.(control);
 });

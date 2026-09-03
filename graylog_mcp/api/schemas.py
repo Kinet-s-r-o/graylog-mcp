@@ -212,7 +212,7 @@ class QueryDefinitionInput(StrictRequest):
     type: Literal["messages", "aggregate"] = "messages"
     query: str = Field(min_length=1, max_length=20_000)
     minutes: int = Field(60, ge=1, le=525_600)
-    limit: int = Field(100, ge=1, le=10_000)
+    limit: int | None = Field(None, ge=1, le=10_000)
     interval: str | None = Field(None, max_length=32)
     group_by: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
     metrics: list[dict[str, Any]] = Field(default_factory=lambda: [{"function": "count"}], max_length=50)
