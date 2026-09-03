@@ -42,6 +42,7 @@ export async function request(path, options = {}) {
       options.json === undefined ? options.body : JSON.stringify(options.json),
   };
   delete init.json;
+  delete init.responseType;
   activeRequests += 1;
   setDocumentBusy(true);
   try {
@@ -56,6 +57,7 @@ export async function request(path, options = {}) {
       location.assign("/login");
       throw new ApiError("Your session has expired.", 401, "unauthorized");
     }
+    if (options.responseType === "blob" && response.ok) return response.blob();
     const data = await decode(response);
     if (!response.ok) {
       const details = data.detail;
@@ -80,6 +82,14 @@ export const api = {
   servers: () => request("/ui/api/servers"),
   agents: () => request("/ui/api/agents"),
   queries: () => request("/ui/api/queries"),
+  exportQueries: () =>
+    request("/ui/api/queries/export", { responseType: "blob" }),
+  importQueries: (file) =>
+    request("/ui/api/queries/import", {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": "text/csv; charset=utf-8" },
+    }),
   audit: (params) => request(`/ui/api/audit?${params}`),
   saveServer: (payload, editing) =>
     request("/ui/api/servers", {

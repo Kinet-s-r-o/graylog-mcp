@@ -90,6 +90,56 @@ function scheduleAuditSearch() {
   auditSearchTimer = setTimeout(() => loadAudit(1), 250);
 }
 
+function closeQueryMenu() {
+  const menu = $("queryRuleMenu");
+  const toggle = document.querySelector('[data-action="toggle-query-menu"]');
+  if (!menu || !toggle) return;
+  menu.hidden = true;
+  toggle.setAttribute("aria-expanded", "false");
+}
+
+function toggleQueryMenu() {
+  const menu = $("queryRuleMenu");
+  const toggle = document.querySelector('[data-action="toggle-query-menu"]');
+  if (!menu || !toggle) return;
+  menu.hidden = !menu.hidden;
+  toggle.setAttribute("aria-expanded", String(!menu.hidden));
+}
+
+async function exportQueries() {
+  try {
+    const blob = await api.exportQueries();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "query-rules.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+    closeQueryMenu();
+    notify("Query rules exported.", "success");
+  } catch (error) {
+    notify(error.message, "error");
+  }
+}
+
+function openQueryImport() {
+  closeQueryMenu();
+  $("queryImportInput").click();
+}
+
+async function importQueries(file) {
+  if (!file) return;
+  try {
+    const result = await api.importQueries(file);
+    await loadQueries();
+    notify(`${result.imported} query rule(s) imported.`, "success");
+  } catch (error) {
+    notify(error.message, "error");
+  } finally {
+    $("queryImportInput").value = "";
+  }
+}
+
 function configureAuditRefresh() {
   if (state.auditRefreshTimer) {
     clearInterval(state.auditRefreshTimer);
@@ -127,6 +177,9 @@ function item(kind, target) {
 const actions = {
   "toggle-menu": () => toggleMenu(),
   "toggle-theme": () => toggleTheme(),
+  "toggle-query-menu": () => toggleQueryMenu(),
+  "export-queries": () => exportQueries(),
+  "import-queries": () => openQueryImport(),
   "open-logout": () => openLogout(),
   "add-server": () => openServer(),
   "add-agent": () => openAgent(),
@@ -176,6 +229,7 @@ const actions = {
 };
 
 document.addEventListener("click", async (event) => {
+  if (!event.target.closest(".query-rule-actions")) closeQueryMenu();
   const navLink = event.target.closest(".nav-links a[data-section]");
   if (navLink) {
     event.preventDefault();
@@ -226,6 +280,10 @@ document.addEventListener(
 );
 
 document.addEventListener("change", (event) => {
+  if (event.target.id === "queryImportInput") {
+    importQueries(event.target.files?.[0]);
+    return;
+  }
   if (event.target.id === "auditSource") scheduleAuditSearch();
   if (event.target.id === "mRuleType") ruleTypeChanged();
   const control = event.target.closest('[data-action^="audit-"]');

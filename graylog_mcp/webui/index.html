@@ -24,11 +24,18 @@
           ><a href="#queries" data-section="queriesSection">Query Rules</a
           ><a href="#audit" data-section="auditSection">Audit Log</a>
         </nav>
-        <a class="logout-link" href="/logout" data-action="open-logout"
-          >Logout</a
-        ><button class="theme" data-action="toggle-theme" id="themeButton">
-          Dark mode
-        </button>
+        <div class="nav-actions">
+          <button
+            class="theme"
+            data-action="toggle-theme"
+            id="themeButton"
+            aria-label="Switch to dark mode"
+            title="Switch to dark mode"
+          ><span id="themeIcon" aria-hidden="true">☾</span></button>
+          <a class="logout-link" href="/logout" data-action="open-logout"
+            >Logout</a
+          >
+        </div>
       </div>
     </header>
     <main>
@@ -105,7 +112,27 @@
           </div>
         </div>
         <div class="table-toolbar">
-          <button data-action="add-rule">+ Add rule</button>
+          <div class="query-rule-actions">
+            <button data-action="add-rule">+ Add rule</button
+            ><div class="query-rule-dropdown">
+              <button
+                type="button"
+                class="dropdown-toggle"
+                data-action="toggle-query-menu"
+                aria-label="More query rule actions"
+                aria-expanded="false"
+              >▼</button>
+              <div id="queryRuleMenu" class="dropdown-menu" hidden>
+                <button type="button" data-action="export-queries">
+                  Export CSV
+                </button>
+                <button type="button" data-action="import-queries">
+                  Import CSV
+                </button>
+              </div>
+            </div>
+            <input id="queryImportInput" type="file" accept=".csv,text/csv" hidden />
+          </div>
         </div>
         <div id="queriesOut" class="audit-table-wrap">
           <p class="muted">Loading query rules…</p>
@@ -152,14 +179,6 @@
         </div>
         <div class="audit-actions">
           <label class="audit-page-size"
-            >Rows per page
-            <select id="auditPageSize" data-action="audit-page-size">
-              <option value="10">10</option>
-              <option value="25" selected>25</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select></label
-          ><label class="audit-page-size"
             >Auto-refresh
             <select id="auditRefresh" data-action="audit-refresh">
               <option value="0">Off</option>
@@ -174,6 +193,15 @@
           <p class="muted">Change a search field to load audit records.</p>
         </div>
         <div class="audit-pagination">
+          <label class="audit-page-size"
+            >Rows per page
+            <select id="auditPageSize" data-action="audit-page-size">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select></label
+          >
           <button
             id="auditPrev"
             class="secondary"
@@ -262,7 +290,7 @@
         <div class="modal-actions">
           <button type="button" class="secondary" data-action="cancel-delete">
             Cancel</button
-          ><button type="button" class="danger" data-action="confirm-delete">
+          ><button type="button" class="danger delete-button" data-action="confirm-delete">
             Delete
           </button>
         </div>

@@ -14,7 +14,7 @@ export function renderServers() {
     `<table class="audit-table"><thead><tr>${filterHeader("Name", "servers", "name")}${filterHeader("URL", "servers", "url")}${filterHeader("TLS", "servers", "verify_tls")}${filterHeader("Timeout", "servers", "timeout_seconds")}<th>Created</th><th>Actions</th></tr></thead><tbody>${rows
       .map(
         (server) =>
-          `<tr class="table-row" data-edit-kind="server" data-id="${server.id}"><td><strong>${escapeHtml(server.name)}</strong></td><td>${escapeHtml(server.url)}</td><td>${server.verify_tls ? "Enabled" : "Disabled"}</td><td>${escapeHtml(server.timeout_seconds)} s</td><td>${escapeHtml(server.created_at)}</td><td class="row-actions"><button class="secondary" data-action="edit-server" data-id="${server.id}">Edit</button><button class="secondary" data-action="delete-server" data-id="${server.id}">Delete</button></td></tr>`,
+          `<tr class="table-row" data-edit-kind="server" data-id="${server.id}"><td><strong>${escapeHtml(server.name)}</strong></td><td>${escapeHtml(server.url)}</td><td>${server.verify_tls ? "Enabled" : "Disabled"}</td><td>${escapeHtml(server.timeout_seconds)} s</td><td>${escapeHtml(server.created_at)}</td><td class="row-actions"><button class="secondary" data-action="edit-server" data-id="${server.id}">Edit</button><button class="delete-button" data-action="delete-server" data-id="${server.id}">Delete</button></td></tr>`,
       )
       .join("")}</tbody></table>`;
 }
@@ -33,7 +33,7 @@ export function renderAgents() {
     `<table class="audit-table"><thead><tr>${filterHeader("Name", "agents", "name")}${filterHeader("Graylog server", "agents", "graylog_server_name")}${filterHeader("API key", "agents", "api_key_last4")}${filterHeader("Status", "agents", "status")}<th>Created</th><th>Actions</th></tr></thead><tbody>${rows
       .map(
         (agent) =>
-          `<tr class="table-row" data-edit-kind="agent" data-id="${agent.id}"><td><strong>${escapeHtml(agent.name)}</strong></td><td>${escapeHtml(agent.graylog_server_name)}</td><td>••••${escapeHtml(agent.api_key_last4)}</td><td><span class="badge ${agent.active ? "active" : "inactive"}">${agent.status}</span></td><td>${escapeHtml(agent.created_at)}</td><td class="row-actions"><button class="secondary" data-action="edit-agent" data-id="${agent.id}">Edit</button><button class="secondary" data-action="delete-agent" data-id="${agent.id}">Delete</button></td></tr>`,
+          `<tr class="table-row" data-edit-kind="agent" data-id="${agent.id}"><td><strong>${escapeHtml(agent.name)}</strong></td><td>${escapeHtml(agent.graylog_server_name)}</td><td>••••${escapeHtml(agent.api_key_last4)}</td><td><span class="badge ${agent.active ? "active" : "inactive"}">${agent.status}</span></td><td>${escapeHtml(agent.created_at)}</td><td class="row-actions"><button class="secondary" data-action="edit-agent" data-id="${agent.id}">Edit</button><button class="delete-button" data-action="delete-agent" data-id="${agent.id}">Delete</button></td></tr>`,
       )
       .join("")}</tbody></table>`;
 }
@@ -72,7 +72,7 @@ export function renderQueries() {
     `<table class="audit-table"><thead><tr>${filterHeader("Name", "queries", "name", true)}${filterHeader("Description", "queries", "description", true)}${filterHeader("Type", "queries", "type", true)}${filterHeader("Time range", "queries", "minutes", true)}${filterHeader("Limit", "queries", "limit", true)}<th>Actions</th></tr></thead><tbody>${rows
       .map(
         (query) =>
-          `<tr class="table-row" data-edit-kind="rule" data-name="${escapeHtml(query.name)}"><td><strong>${escapeHtml(query.name)}</strong></td><td>${escapeHtml(query.description || "—")}</td><td>${query.type === "aggregate" ? "Aggregation" : "Messages"}</td><td>${escapeHtml(query.minutes || 60)} min</td><td>${query.type === "aggregate" ? "—" : escapeHtml(query.limit || 100)}</td><td class="row-actions"><button class="secondary" data-action="edit-rule" data-name="${escapeHtml(query.name)}">Edit</button><button class="secondary" data-action="delete-rule" data-name="${escapeHtml(query.name)}">Delete</button></td></tr>`,
+          `<tr class="table-row" data-edit-kind="rule" data-name="${escapeHtml(query.name)}"><td><strong>${escapeHtml(query.name)}</strong></td><td>${escapeHtml(query.description || "—")}</td><td>${query.type === "aggregate" ? "Aggregation" : "Messages"}</td><td>${escapeHtml(query.minutes || 60)} min</td><td>${query.type === "aggregate" ? "—" : escapeHtml(query.limit || 100)}</td><td class="row-actions"><button class="secondary" data-action="edit-rule" data-name="${escapeHtml(query.name)}">Edit</button><button class="delete-button" data-action="delete-rule" data-name="${escapeHtml(query.name)}">Delete</button></td></tr>`,
       )
       .join("")}</tbody></table>`;
 }

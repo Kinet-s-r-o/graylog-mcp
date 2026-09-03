@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 import logging
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ..auth.admin import AdminAuth, SESSION_COOKIE
 from ..audit import AuditStore
@@ -28,6 +31,38 @@ from .schemas import (
 
 log = logging.getLogger(__name__)
 WEBUI_DIR = Path(__file__).resolve().parents[1] / "webui"
+QUERY_CSV_FIELDS = (
+    "name", "description", "type", "query", "minutes", "limit", "interval",
+    "group_by", "metrics", "defaults", "instructions", "fields",
+)
+QUERY_CSV_JSON_FIELDS = {"group_by", "metrics", "defaults", "fields"}
+
+
+def _csv_json(value):
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _csv_query_payload(row: dict[str, str | None], row_number: int) -> dict:
+    if None in row:
+        raise ValueError(f"CSV row {row_number} contains more values than the header")
+    payload: dict = {}
+    for field in QUERY_CSV_FIELDS:
+        value = (row.get(field) or "").strip()
+        if field in QUERY_CSV_JSON_FIELDS:
+            if value:
+                try:
+                    payload[field] = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"CSV row {row_number}: {field} contains invalid JSON") from exc
+        elif field in {"minutes", "limit"}:
+            if value:
+                try:
+                    payload[field] = int(value)
+                except ValueError as exc:
+                    raise ValueError(f"CSV row {row_number}: {field} must be an integer") from exc
+        elif value:
+            payload[field] = value
+    return payload
 
 
 class WebUIAssets:
@@ -149,6 +184,60 @@ def create_admin_router(
         name = data.pop("name")
         return await audit.save_query(name, data)
 
+    @admin.get("/queries/export")
+    async def export_queries():
+        output = io.StringIO(newline="")
+        writer = csv.DictWriter(output, fieldnames=QUERY_CSV_FIELDS, lineterminator="\r\n")
+        writer.writeheader()
+        for query in await audit.list_queries():
+            row = {field: query.get(field, "") for field in QUERY_CSV_FIELDS}
+            for field in QUERY_CSV_JSON_FIELDS:
+                row[field] = _csv_json(query.get(field, [] if field != "defaults" else {}))
+            for field in ("minutes", "limit"):
+                row[field] = "" if query.get(field) is None else str(query[field])
+            writer.writerow(row)
+        return Response(
+            content="\ufeff" + output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="query-rules.csv"'},
+        )
+
+    @admin.post("/queries/import")
+    async def import_queries(request: Request):
+        try:
+            text = (await request.body()).decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="CSV must use UTF-8 encoding.") from exc
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="CSV file is empty.")
+        reader = csv.DictReader(io.StringIO(text))
+        headers = reader.fieldnames or []
+        missing = {field for field in ("name", "query") if field not in headers}
+        if missing:
+            raise HTTPException(status_code=400, detail=f"CSV is missing required columns: {', '.join(sorted(missing))}")
+        validated: list[tuple[str, dict]] = []
+        try:
+            for row_number, row in enumerate(reader, start=2):
+                if not any((value or "").strip() for value in row.values() if value is not None):
+                    continue
+                payload = _csv_query_payload(row, row_number)
+                model = QueryDefinitionInput.model_validate(payload)
+                data = model.model_dump()
+                name = data.pop("name")
+                validated.append((name, data))
+        except ValueError as exc:
+            detail = str(exc)
+            if not detail.startswith("CSV row "):
+                detail = f"CSV row {row_number}: {detail}"
+            raise HTTPException(status_code=400, detail=detail) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"CSV row {row_number}: {exc}") from exc
+        if not validated:
+            raise HTTPException(status_code=400, detail="CSV contains no data rows.")
+        for name, data in validated:
+            await audit.save_query(name, data)
+        return {"imported": len(validated), "names": [name for name, _ in validated]}
+
     @admin.delete("/queries")
     async def delete_query(name: str = Query(min_length=1, max_length=128)):
         clean_name = SavedQueryRequest(name=name).name
@@ -267,4 +356,3 @@ def create_admin_router(
 
     router.include_router(admin)
     return router
-

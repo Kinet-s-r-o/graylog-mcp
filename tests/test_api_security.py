@@ -71,6 +71,18 @@ def test_authorization_csrf_and_agent_scoped_audit(monkeypatch, tmp_path):
 
         home = client.get("/")
         csrf = re.search(r'<meta name="csrf-token" content="([^"]+)">', home.text).group(1)
+        imported = client.post(
+            "/ui/api/queries/import",
+            data="\ufeffname,description,type,query,minutes,limit,interval,group_by,metrics,defaults,instructions,fields\n"
+            '"súhrn","Počet chýb","aggregate","level:3","60","","5m","[]","[{""function"":""count"",""id"":""count""}]","{""level"":3}","",""\n',
+            headers={"X-CSRF-Token": csrf, "Content-Type": "text/csv; charset=utf-8"},
+        )
+        assert imported.status_code == 200
+        assert imported.json()["imported"] == 1
+        exported = client.get("/ui/api/queries/export")
+        assert exported.status_code == 200
+        assert exported.content.startswith(b"\xef\xbb\xbf")
+        assert "súhrn" in exported.content.decode("utf-8-sig")
         admin_calls_without_csrf = [
             client.post("/ui/api/query"),
             client.post("/ui/api/saved"),

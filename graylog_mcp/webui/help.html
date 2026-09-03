@@ -281,6 +281,14 @@ curl -H "Authorization: Bearer AGENT_API_KEY" http://localhost:8081/mcp</pre
               the selected rule.
             </td>
           </tr>
+          <tr>
+            <td><strong>Import / Export CSV</strong></td>
+            <td>
+              Import or export all query rules as UTF-8 CSV. Import validates
+              every row before saving; a duplicate name updates the existing
+              rule.
+            </td>
+          </tr>
         </table>
         <pre>
 curl -X POST http://localhost:8081/api/v1/queries/run   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"name":"errors_by_service","parameters":{"service":"api"}}'</pre

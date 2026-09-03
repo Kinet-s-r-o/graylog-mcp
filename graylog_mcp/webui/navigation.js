@@ -8,7 +8,12 @@ export function configureNavigation(loaders) {
 
 export function setTheme(dark) {
   document.body.classList.toggle("dark", dark);
-  $("themeButton").textContent = dark ? "Light mode" : "Dark mode";
+  const themeButton = $("themeButton");
+  const themeIcon = $("themeIcon");
+  const label = dark ? "Switch to light mode" : "Switch to dark mode";
+  themeIcon.textContent = dark ? "☀" : "☾";
+  themeButton.setAttribute("aria-label", label);
+  themeButton.setAttribute("title", label);
   try {
     localStorage.setItem("graylogDark", dark ? "1" : "0");
   } catch {
