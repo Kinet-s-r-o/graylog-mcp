@@ -149,7 +149,10 @@ def test_authorization_csrf_and_agent_scoped_audit(monkeypatch, tmp_path):
         client.portal.call(partial(server.audit.record, source="mcp", operation="other", agent_id=agent["agent_id"] + 100))
         scoped = client.get(mcp_url("/api/v1/audit"), headers=bearer)
         assert scoped.status_code == 200
-        assert [item["operation"] for item in scoped.json()["items"]] == ["owned"]
+        operations = [item["operation"] for item in scoped.json()["items"]]
+        assert "owned" in operations
+        assert "POST /mcp" in operations
+        assert "other" not in operations
 
         assert client.get("/logout").status_code in {404, 405}
         assert client.post("/logout").status_code == 403

@@ -250,6 +250,8 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         listener_port = _listener_port(request)
         response = None
         agent_token = None
+        audit_agent_id = None
+        audit_mcp_request = False
         try:
             if listener_port not in {settings.mcp_port, settings.webui_port}:
                 response = PlainTextResponse("Not Found", status_code=404)
@@ -277,6 +279,8 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
                     )
                 else:
                     agent_token = agent_context.set(context)
+                    audit_agent_id = context.get("agent_id")
+                    audit_mcp_request = True
                     response = await call_next(request)
             elif (
                 (path.startswith("/ui/api/") or path == "/logout")
@@ -299,6 +303,23 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
             else:
                 response = await call_next(request)
         finally:
+            if audit_mcp_request:
+                # FastMCP is mounted below this middleware, so the protocol
+                # request itself otherwise never reaches the audit store.
+                # Do not consume request.body(): the mounted MCP transport
+                # still needs to read it.
+                await audit.record(
+                    source="mcp",
+                    operation=f"{request.method} {path}",
+                    request={
+                        "query": dict(request.query_params),
+                        "content_type": request.headers.get("content-type"),
+                    },
+                    status_code=response.status_code if response is not None else None,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    success=response is not None and response.status_code < 400,
+                    agent_id=audit_agent_id,
+                )
             if agent_token is not None:
                 agent_context.reset(agent_token)
         response.headers.setdefault("X-Request-ID", request_id)
