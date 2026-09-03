@@ -40,6 +40,8 @@ import {
 } from "./tables.js";
 import { state } from "./state.js";
 
+let auditSearchTimer = null;
+
 async function loadServers() {
   try {
     state.servers = (await api.servers()).items || [];
@@ -81,6 +83,11 @@ async function loadAudit(page = 1) {
     $("auditOut").innerHTML = `<p class="audit-empty failed"></p>`;
     $("auditOut").querySelector("p").textContent = error.message;
   }
+}
+
+function scheduleAuditSearch() {
+  clearTimeout(auditSearchTimer);
+  auditSearchTimer = setTimeout(() => loadAudit(1), 250);
 }
 
 function configureAuditRefresh() {
@@ -132,7 +139,6 @@ const actions = {
   "cancel-logout": () => cancelLogout(),
   "confirm-logout": () => confirmLogout(),
   "test-server": () => testServer(),
-  "search-audit": () => loadAudit(1),
   "audit-page-size": () => loadAudit(1),
   "audit-refresh": () => {
     configureAuditRefresh();
@@ -205,6 +211,10 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+document.addEventListener("input", (event) => {
+  if (event.target.id === "auditSearch") scheduleAuditSearch();
+});
+
 document.addEventListener(
   "invalid",
   (event) => {
@@ -216,6 +226,7 @@ document.addEventListener(
 );
 
 document.addEventListener("change", (event) => {
+  if (event.target.id === "auditSource") scheduleAuditSearch();
   if (event.target.id === "mRuleType") ruleTypeChanged();
   const control = event.target.closest('[data-action^="audit-"]');
   if (control) actions[control.dataset.action]?.(control);
