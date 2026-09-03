@@ -18,12 +18,12 @@ Na lokálne overenie Compose konfigurácie bez produkčných údajov je priprave
 docker compose --env-file example.env config
 ```
 
-## Voliteľný HTTP/HTTPS reverse proxy cez Caddy
+## HTTP/HTTPS reverse proxy cez Caddy
 
-Aplikácia počúva na dvoch samostatných portoch: `MCP_PORT` pre MCP a agentské REST API, `WEBUI_PORT` pre WebUI a administračné API. Obe rozhrania sú na hostiteľovi predvolene bindnuté iba na `127.0.0.1`; verejný HTTP aj HTTPS prístup môže obsluhovať Caddy. Caddy sa spúšťa existujúcim Compose profilom `https`:
+Aplikácia počúva na dvoch samostatných portoch: `MCP_PORT` pre MCP a agentské REST API, `WEBUI_PORT` pre WebUI a administračné API. Tieto porty nie sú publikované na hostiteľovi; Caddy k nim pristupuje cez privátnu Compose sieť a je spúšťaný automaticky:
 
 ```powershell
-docker compose --profile https up -d --build
+docker compose up -d --build
 ```
 
 Nastavenia Caddy sú v `.env`:
@@ -35,7 +35,7 @@ Nastavenia Caddy sú v `.env`:
 - `CADDY_WEBUI_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty publikované na hostiteľovi bez úpravy `docker-compose.yml`. Predvolené hodnoty sú 8080 pre voliteľný HTTP WebUI, 443 pre HTTPS WebUI a 8443 pre HTTPS MCP.
 - `CADDY_HTTP_BIND`, `CADDY_WEBUI_HTTP_BIND`, `CADDY_WEBUI_BIND` a `CADDY_MCP_BIND` určujú hostiteľské rozhranie pre každý publikovaný port; `0.0.0.0` znamená všetky rozhrania a `127.0.0.1` iba lokálny prístup.
 
-Caddy uchováva ACME účty a certifikáty v `./caddy/data`, takže automatická obnova pretrvá aj po reštarte kontajnera. Po zmene certifikátu stačí reštartovať Caddy: `docker compose --profile https restart caddy`.
+Caddy uchováva ACME účty a certifikáty v `./caddy/data`, takže automatická obnova pretrvá aj po reštarte kontajnera. Po zmene certifikátu stačí reštartovať Caddy: `docker compose restart caddy`.
 
 Endpointy sú oddelené už v aplikácii a Caddy ich iba preposiela: voliteľný HTTP WebUI je na `http://logs.example.com:8080/`, HTTPS WebUI na `https://logs.example.com/` a MCP na `https://logs.example.com:8443/mcp`. `MCP_PORT` odmieta WebUI cesty a `WEBUI_PORT` odmieta MCP aj agentské `/api/v1` cesty. Caddy navyše blokuje MCP cestu na oboch WebUI listeneroch. Port 80 ostáva Caddy k dispozícii pre ACME a HTTPS presmerovanie.
 

@@ -11,7 +11,9 @@
 
 # Optional plain-HTTP WebUI entry point on a dedicated port. Port 80 remains
 # available for ACME challenges and automatic HTTPS redirects.
-http://{$CADDY_DOMAIN}:{$CADDY_WEBUI_HTTP_PORT} {
+# The optional HTTP WebUI listener is local by default and accepts localhost
+# as well as the configured domain. HTTPS below remains domain-specific.
+http://:{$CADDY_WEBUI_HTTP_PORT} {
     handle {$MCP_PATH}* {
         respond "Not Found" 404
     }

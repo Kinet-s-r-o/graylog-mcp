@@ -7,11 +7,8 @@ services:
     env_file:
       - path: .env
         required: false
-    ports:
-      # Both native interfaces stay on host loopback by default. Caddy reaches
-      # them over the private Compose network on their separate container ports.
-      - "${MCP_BIND:-127.0.0.1}:${MCP_PORT:-8000}:${MCP_PORT:-8000}"
-      - "${WEBUI_BIND:-127.0.0.1}:${WEBUI_PORT:-8001}:${WEBUI_PORT:-8001}"
+    # The application is reachable by Caddy over the private Compose network.
+    # Its ports are intentionally not published on the host.
     volumes:
       - ./queries.yaml:/app/queries.yaml:ro
       - ./data:/data
@@ -23,7 +20,6 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    profiles: ["https"]
     restart: unless-stopped
     depends_on:
       graylog-mcp:
