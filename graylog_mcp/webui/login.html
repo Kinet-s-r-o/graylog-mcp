@@ -12,14 +12,14 @@
       <p>Sign in to the WebUI</p>
       {error}
       <form method="post" action="/login">
-        <label for="username">Username</label
+        <label for="username">Username <span class="required-marker" aria-hidden="true">*</span></label
         ><input
           id="username"
           name="username"
           autocomplete="username"
           required
           autofocus
-        /><label for="password">Password</label
+        /><label for="password">Password <span class="required-marker" aria-hidden="true">*</span></label
         ><input
           id="password"
           name="password"

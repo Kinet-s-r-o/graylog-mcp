@@ -13,12 +13,16 @@ export function configureModalRefresh(callbacks) {
   refresh = callbacks;
 }
 
-function field(label, id, value = "", type = "text", placeholder = "") {
-  return `<div><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}"></div>`;
+function labelMarkup(label, required = false) {
+  return `${label}${required ? ' <span class="required-marker" aria-hidden="true">*</span>' : ""}`;
 }
 
-function textarea(label, id, value = "") {
-  return `<label for="${id}">${label}</label><textarea id="${id}">${escapeHtml(value)}</textarea>`;
+function field(label, id, value = "", type = "text", placeholder = "", required = false) {
+  return `<div><label for="${id}">${labelMarkup(label, required)}</label><input id="${id}" type="${type}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}"${required ? ' required aria-required="true"' : ""}></div>`;
+}
+
+function textarea(label, id, value = "", required = false) {
+  return `<label for="${id}">${labelMarkup(label, required)}</label><textarea id="${id}"${required ? ' required aria-required="true"' : ""}>${escapeHtml(value)}</textarea>`;
 }
 
 function values() {
@@ -63,7 +67,7 @@ export function openServer(item = null) {
   open(
     "server",
     item ? "Edit Graylog server" : "Add Graylog server",
-    `<div class="grid">${field("Name", "mServerName", server.name, "text", "production")}${field("URL", "mServerUrl", server.url, "url", "https://graylog.example.com")}${field("API token", "mServerToken", "", "password", item ? "Leave blank to keep the current token" : "Graylog API token")}${field("Timeout (seconds)", "mServerTimeout", server.timeout_seconds || 30, "number")}<div><label for="mServerTls">Verify TLS</label><select id="mServerTls"><option value="true" ${tls ? "selected" : ""}>Yes</option><option value="false" ${!tls ? "selected" : ""}>No</option></select></div></div>`,
+    `<div class="grid">${field("Name", "mServerName", server.name, "text", "production", true)}${field("URL", "mServerUrl", server.url, "url", "https://graylog.example.com", true)}${field("API token", "mServerToken", "", "password", item ? "Leave blank to keep the current token" : "Graylog API token", !item)}${field("Timeout (seconds)", "mServerTimeout", server.timeout_seconds || 30, "number")}<div><label for="mServerTls">Verify TLS</label><select id="mServerTls"><option value="true" ${tls ? "selected" : ""}>Yes</option><option value="false" ${!tls ? "selected" : ""}>No</option></select></div></div>`,
     item,
   );
 }
@@ -73,7 +77,7 @@ export function openAgent(item = null) {
   open(
     "agent",
     item ? "Edit MCP client" : "Add MCP client",
-    `<div class="grid">${field("Client name", "mAgentName", agent.name, "text", "monitoring-agent")}<div><label for="mAgentServer">Assigned Graylog server</label><select id="mAgentServer">${options(state.servers, agent.graylog_server_id)}</select></div>${field("API key", "mAgentKey", "", "password", item ? "Leave blank to keep the current key" : "Leave blank to generate")}${item ? `<div><label for="mAgentActive">Status</label><select id="mAgentActive"><option value="true" ${agent.active ? "selected" : ""}>Active</option><option value="false" ${!agent.active ? "selected" : ""}>Inactive</option></select></div>` : ""}</div>${textarea("Allowed source IPs (CIDR)", "mAgentAllowedIps", (agent.allowed_ips || []).join("\n"))}`,
+    `<div class="grid">${field("Client name", "mAgentName", agent.name, "text", "monitoring-agent", true)}<div><label for="mAgentServer">${labelMarkup("Assigned Graylog server", true)}</label><select id="mAgentServer" required aria-required="true">${options(state.servers, agent.graylog_server_id)}</select></div>${field("API key", "mAgentKey", "", "password", item ? "Leave blank to keep the current key" : "Leave blank to generate")}${item ? `<div><label for="mAgentActive">Status</label><select id="mAgentActive"><option value="true" ${agent.active ? "selected" : ""}>Active</option><option value="false" ${!agent.active ? "selected" : ""}>Inactive</option></select></div>` : ""}</div>${textarea("Allowed source IPs (CIDR)", "mAgentAllowedIps", (agent.allowed_ips || []).join("\n"))}`,
     item,
   );
 }
@@ -83,7 +87,7 @@ export function openRule(item = null) {
   open(
     "rule",
     item ? "Edit query rule" : "Add query rule",
-    `${field("Name", "mRuleName", query.name, "text", "errors_by_service")}${field("Description", "mRuleDescription", query.description || "", "text", "Count errors grouped by service")}<div class="grid"><div><label for="mRuleType">Type</label><select id="mRuleType"><option value="messages" ${query.type !== "aggregate" ? "selected" : ""}>Message search</option><option value="aggregate" ${query.type === "aggregate" ? "selected" : ""}>Aggregation</option></select></div>${field("Time range (minutes)", "mRuleMinutes", query.minutes || 60, "number")}${field("Message limit", "mRuleLimit", query.limit || 100, "number")}${field("Time bucket", "mRuleInterval", query.interval || "", "text", "5m")}</div>${textarea("Lucene query template", "mRuleQuery", query.query || "")}${textarea("Group by JSON", "mRuleGroup", JSON.stringify(query.group_by || [], null, 2))}${textarea("Metrics JSON", "mRuleMetrics", JSON.stringify(query.metrics || [{ function: "count" }], null, 2))}${textarea("Default parameters JSON", "mRuleDefaults", JSON.stringify(query.defaults || {}, null, 2))}${textarea("Instructions for the agent", "mRuleInstructions", query.instructions || "")}`,
+    `${field("Name", "mRuleName", query.name, "text", "errors_by_service", true)}${field("Description", "mRuleDescription", query.description || "", "text", "Count errors grouped by service")}<div class="grid"><div><label for="mRuleType">Type</label><select id="mRuleType"><option value="messages" ${query.type !== "aggregate" ? "selected" : ""}>Message search</option><option value="aggregate" ${query.type === "aggregate" ? "selected" : ""}>Aggregation</option></select></div>${field("Time range (minutes)", "mRuleMinutes", query.minutes || 60, "number")}${field("Message limit", "mRuleLimit", query.limit || 100, "number")}${field("Time bucket", "mRuleInterval", query.interval || "", "text", "5m")}</div>${textarea("Lucene query template", "mRuleQuery", query.query || "", true)}${textarea("Group by JSON", "mRuleGroup", JSON.stringify(query.group_by || [], null, 2))}${textarea("Metrics JSON", "mRuleMetrics", JSON.stringify(query.metrics || [{ function: "count" }], null, 2))}${textarea("Default parameters JSON", "mRuleDefaults", JSON.stringify(query.defaults || {}, null, 2))}${textarea("Instructions for the agent", "mRuleInstructions", query.instructions || "")}`,
     item,
   );
 }

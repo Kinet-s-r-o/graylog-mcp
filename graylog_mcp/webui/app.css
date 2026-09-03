@@ -82,6 +82,10 @@ label {
   font-weight: 600;
   margin: 0.8rem 0 0.25rem;
 }
+.required-marker {
+  color: #dc2626;
+  font-weight: 700;
+}
 input,
 select,
 textarea,

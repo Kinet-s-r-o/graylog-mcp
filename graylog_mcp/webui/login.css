@@ -29,6 +29,10 @@ label {
   font-weight: 600;
   margin: 0.9rem 0 0.25rem;
 }
+.required-marker {
+  color: #dc2626;
+  font-weight: 700;
+}
 input,
 button {
   font: inherit;
