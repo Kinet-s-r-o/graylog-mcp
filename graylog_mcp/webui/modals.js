@@ -160,13 +160,13 @@ export function openAgent(item = null) {
   );
 }
 
-export function openRule(item = null) {
+export function openRule(item = null, duplicate = false) {
   const query = item || {};
   const messageLimit =
     query.type === "aggregate" ? (query.limit ?? "") : (query.limit ?? 100);
   open(
     "rule",
-    item ? "Edit query rule" : "Add query rule",
+    duplicate ? "Duplicate query rule" : item ? "Edit query rule" : "Add query rule",
     `${field("Name", "mRuleName", query.name, "text", "errors_by_service", true)}${field("Description", "mRuleDescription", query.description || "", "text", "Count errors grouped by service")}<div class="grid"><div><label for="mRuleType">Type</label><select id="mRuleType"><option value="messages" ${query.type !== "aggregate" ? "selected" : ""}>Message search</option><option value="aggregate" ${query.type === "aggregate" ? "selected" : ""}>Aggregation</option></select></div>${field("Time range (minutes)", "mRuleMinutes", query.minutes || 60, "number")}<div id="messageLimitField">${field("Message limit", "mRuleLimit", messageLimit, "number")}</div>${field("Time bucket", "mRuleInterval", query.interval || "", "text", "5m")}</div>${textarea("Lucene query template", "mRuleQuery", query.query || "", true)}${textarea("Group by JSON", "mRuleGroup", JSON.stringify(query.group_by || [], null, 2))}${textarea("Metrics JSON", "mRuleMetrics", JSON.stringify(query.metrics || [{ function: "count" }], null, 2))}${textarea("Default parameters JSON", "mRuleDefaults", JSON.stringify(query.defaults || {}, null, 2))}${textarea("Instructions for the agent", "mRuleInstructions", query.instructions || "")}`,
     item,
   );

@@ -202,6 +202,16 @@ const actions = {
   "edit-server": (button) => openServer(item("server", button.dataset.id)),
   "edit-agent": (button) => openAgent(item("agent", button.dataset.id)),
   "edit-rule": (button) => openRule(item("rule", button.dataset.name)),
+  "duplicate-rule": (button) => {
+    const selected = item("rule", button.dataset.name);
+    if (!selected) return;
+    const names = new Set(state.queries.map((query) => query.name));
+    const baseName = `${selected.name} (copy)`;
+    let copyName = baseName;
+    let suffix = 2;
+    while (names.has(copyName)) copyName = `${baseName} ${suffix++}`;
+    openRule({ ...selected, name: copyName }, true);
+  },
   "delete-server": (button) => {
     const selected = item("server", button.dataset.id);
     if (selected) openDelete("server", selected.id, selected.name);
