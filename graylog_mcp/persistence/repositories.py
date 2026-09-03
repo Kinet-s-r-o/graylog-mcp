@@ -87,17 +87,18 @@ class AuditStore:
     async def record(self, *, source: str, operation: str, request: Any = None,
                      response: Any = None, status_code: int | None = None,
                      duration_ms: float | None = None, success: bool = True,
-                     error: str | None = None, agent_id: int | None = None):
+                     error: str | None = None, agent_id: int | None = None,
+                     client_ip: str | None = None):
         if not self.db:
             return
         try:
             await self.db.execute(
-                "INSERT INTO audit_log(created_at,source,operation,request_json,response_json,status_code,duration_ms,success,error,agent_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO audit_log(created_at,source,operation,request_json,response_json,status_code,duration_ms,success,error,agent_id,client_ip) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (datetime.now(timezone.utc).isoformat(), source, operation,
                  self._compact(request) if request is not None else None,
                  self._compact(response) if response is not None else None,
                  status_code, duration_ms, int(success),
-                 self._redact_text(error)[:self.max_payload_chars] if error else None, agent_id),
+                 self._redact_text(error)[:self.max_payload_chars] if error else None, agent_id, client_ip),
             )
             await self.db.commit()
             await self.cleanup()
@@ -121,30 +122,30 @@ class AuditStore:
             # FTS5 supports phrases, prefixes (term*) and boolean expressions.
             # If a user enters invalid FTS syntax, use a safe substring fallback.
             try:
-                sql = "SELECT a.id,a.created_at,a.source,a.operation,a.request_json,a.response_json,a.status_code,a.duration_ms,a.success,a.error FROM audit_log a JOIN audit_fts f ON f.rowid=a.id WHERE audit_fts MATCH ?"
+                sql = "SELECT a.id,a.created_at,a.source,a.operation,a.request_json,a.response_json,a.status_code,a.duration_ms,a.success,a.error,a.agent_id,ag.name,a.client_ip FROM audit_log a JOIN audit_fts f ON f.rowid=a.id LEFT JOIN agents ag ON ag.id=a.agent_id WHERE audit_fts MATCH ?"
                 args: list[Any] = [search]
                 if source: sql += " AND a.source = ?"; args.append(source)
                 if agent_id is not None: sql += " AND a.agent_id = ?"; args.append(agent_id)
                 sql += " ORDER BY a.id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
                 cursor = await self.db.execute(sql, args)
             except Exception:
-                sql = "SELECT id,created_at,source,operation,request_json,response_json,status_code,duration_ms,success,error FROM audit_log WHERE (request_json LIKE ? OR response_json LIKE ? OR operation LIKE ? OR error LIKE ?)"
+                sql = "SELECT a.id,a.created_at,a.source,a.operation,a.request_json,a.response_json,a.status_code,a.duration_ms,a.success,a.error,a.agent_id,ag.name,a.client_ip FROM audit_log a LEFT JOIN agents ag ON ag.id=a.agent_id WHERE (a.request_json LIKE ? OR a.response_json LIKE ? OR a.operation LIKE ? OR a.error LIKE ?)"
                 needle = f"%{search}%"; args = [needle] * 4
-                if source: sql += " AND source = ?"; args.append(source)
-                if agent_id is not None: sql += " AND agent_id = ?"; args.append(agent_id)
-                sql += " ORDER BY id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
+                if source: sql += " AND a.source = ?"; args.append(source)
+                if agent_id is not None: sql += " AND a.agent_id = ?"; args.append(agent_id)
+                sql += " ORDER BY a.id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
                 cursor = await self.db.execute(sql, args)
         else:
-            sql = "SELECT id,created_at,source,operation,request_json,response_json,status_code,duration_ms,success,error FROM audit_log"
+            sql = "SELECT a.id,a.created_at,a.source,a.operation,a.request_json,a.response_json,a.status_code,a.duration_ms,a.success,a.error,a.agent_id,ag.name,a.client_ip FROM audit_log a LEFT JOIN agents ag ON ag.id=a.agent_id"
             args = []
             conditions = []
-            if source: conditions.append("source = ?"); args.append(source)
-            if agent_id is not None: conditions.append("agent_id = ?"); args.append(agent_id)
+            if source: conditions.append("a.source = ?"); args.append(source)
+            if agent_id is not None: conditions.append("a.agent_id = ?"); args.append(agent_id)
             if conditions: sql += " WHERE " + " AND ".join(conditions)
-            sql += " ORDER BY id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
+            sql += " ORDER BY a.id DESC LIMIT ? OFFSET ?"; args.extend([limit, offset])
             cursor = await self.db.execute(sql, args)
         rows = await cursor.fetchall()
-        columns = ["id", "created_at", "source", "operation", "request_json", "response_json", "status_code", "duration_ms", "success", "error"]
+        columns = ["id", "created_at", "source", "operation", "request_json", "response_json", "status_code", "duration_ms", "success", "error", "agent_id", "agent_name", "client_ip"]
         return [dict(zip(columns, row)) for row in rows]
 
     async def count_recent(self, search: str | None = None, source: str | None = None,

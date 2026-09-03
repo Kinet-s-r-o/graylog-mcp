@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import aiosqlite
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 async def _columns(db: aiosqlite.Connection, table: str) -> set[str]:
@@ -49,6 +49,8 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         await db.execute("ALTER TABLE agents ADD COLUMN allowed_ips TEXT NOT NULL DEFAULT '[]'")
     if "agent_id" not in await _columns(db, "audit_log"):
         await db.execute("ALTER TABLE audit_log ADD COLUMN agent_id INTEGER")
+    if "client_ip" not in await _columns(db, "audit_log"):
+        await db.execute("ALTER TABLE audit_log ADD COLUMN client_ip TEXT")
     await db.execute(
         """CREATE TABLE IF NOT EXISTS query_definitions (
           name TEXT PRIMARY KEY, definition_json TEXT NOT NULL,
@@ -93,4 +95,3 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         )
     await db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     await db.commit()
-

@@ -251,6 +251,7 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         response = None
         agent_token = None
         audit_agent_id = None
+        audit_client_ip = None
         audit_mcp_request = False
         audit_mcp_payload = None
         try:
@@ -279,6 +280,7 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
                         "Agent IP address is not allowed", status_code=403
                     )
                 else:
+                    audit_client_ip = agent_auth.client_ip(request)
                     agent_token = agent_context.set(context)
                     audit_agent_id = context.get("agent_id")
                     audit_mcp_request = True
@@ -328,6 +330,7 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
                     duration_ms=(time.perf_counter() - started) * 1000,
                     success=response is not None and response.status_code < 400,
                     agent_id=audit_agent_id,
+                    client_ip=audit_client_ip,
                 )
             if agent_token is not None:
                 agent_context.reset(agent_token)

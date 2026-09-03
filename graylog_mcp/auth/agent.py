@@ -30,8 +30,10 @@ class AgentAuth:
         context = await self.audit.authenticate_agent(api_key or "") if api_key else None
         if not context:
             raise HTTPException(status_code=401, detail="Invalid or inactive agent API key")
-        if not ip_allowed(self.client_ip(request), context.get("allowed_ips", [])):
+        client_ip = self.client_ip(request)
+        if not ip_allowed(client_ip, context.get("allowed_ips", [])):
             raise HTTPException(status_code=403, detail="Agent IP address is not allowed")
+        context["client_ip"] = client_ip
         return context
 
     async def require(
@@ -47,4 +49,3 @@ class AgentAuth:
             yield context
         finally:
             agent_context.reset(token)
-

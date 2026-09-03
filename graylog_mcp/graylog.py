@@ -33,17 +33,18 @@ class GraylogClient:
         started = stopwatch()
         context = agent_context.get() or {}
         agent_id = context.get("agent_id")
+        client_ip = context.get("client_ip")
         try:
             response = await self.client.request(method, path, params=params, json=json)
             if response.is_error:
                 raise GraylogError(f"Graylog API returned HTTP {response.status_code} for {path}")
             result = response.json() if response.content else {}
             if self.audit:
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id)
+                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id, client_ip=client_ip)
             return result
         except Exception as exc:
             if self.audit:
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, status_code=getattr(locals().get("response", None), "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc), agent_id=agent_id)
+                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, status_code=getattr(locals().get("response", None), "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc), agent_id=agent_id, client_ip=client_ip)
             raise
 
     async def search_messages(self, query: str, minutes: int = 15, limit: int = 100, fields: list[str] | None = None):
