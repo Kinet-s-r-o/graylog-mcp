@@ -200,7 +200,11 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         await audit.open()
         await audit.seed_queries(catalog.queries)
         try:
-            yield
+            # Mounted Starlette applications do not run their own lifespan.
+            # FastMCP's Streamable HTTP transport therefore has to be started
+            # explicitly from the parent FastAPI application's lifespan.
+            async with mcp.session_manager.run():
+                yield
         finally:
             await graylog.close()
             await audit.close()

@@ -109,6 +109,28 @@ def test_authorization_csrf_and_agent_scoped_audit(monkeypatch, tmp_path):
         bearer = {"Authorization": f"Bearer {api_key}"}
         assert client.get(mcp_url("/api/v1/queries"), headers=bearer).status_code == 200
 
+        initialize = client.post(
+            mcp_url("/mcp"),
+            headers={
+                **bearer,
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0"},
+                },
+            },
+        )
+        assert initialize.status_code == 200
+        assert initialize.headers.get("mcp-session-id")
+        assert '"serverInfo"' in initialize.text
+
         restricted_agent = client.post(
             "/ui/api/agents",
             json={
