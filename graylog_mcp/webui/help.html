@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Graylog MCP UI documentation</title>
+    <link rel="stylesheet" href="/ui/assets/help.css" />
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <strong>Graylog MCP</strong><a href="/">← Back to UI</a>
+      </div>
+    </header>
+    <main>
+      <div class="hero">
+        <h1>Web UI documentation</h1>
+        <p class="muted">
+          This guide explains every UI section, field, action, expected format,
+          and the equivalent REST examples. The UI itself is protected by a
+          session-based login form.
+        </p>
+        <p>
+          <strong>Base URL:</strong> <code>http://localhost:8000</code> &nbsp;
+          <strong>Admin login:</strong> the configured
+          <code>UI_USERNAME</code> and <code>UI_PASSWORD</code>.
+        </p>
+      </div>
+      <section>
+        <h2>1. Graylog Servers</h2>
+        <p>
+          Add a Graylog server, select an existing one, test its API connection,
+          or update its settings. Query execution and newly created agents use
+          the selected server.
+        </p>
+        <table>
+          <tr>
+            <th>Field / action</th>
+            <th>What to enter or expect</th>
+          </tr>
+          <tr>
+            <td><strong>Name</strong></td>
+            <td>
+              A local label, for example <code>production</code> or
+              <code>staging</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>URL</strong></td>
+            <td>
+              The Graylog base URL, for example
+              <code>https://graylog.example.com</code>. Do not add
+              <code>/api/cluster</code>; the UI adds the API path.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>API token</strong></td>
+            <td>
+              Graylog API token. It is sent as Basic Auth in the
+              <code>TOKEN:token</code> format. When editing, leave this blank to
+              keep the stored token.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Verify TLS</strong></td>
+            <td>
+              Choose <code>yes</code> for normal HTTPS certificate verification.
+              Choose <code>no</code> only for a trusted test environment with a
+              self-signed certificate.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Timeout (seconds)</strong></td>
+            <td>
+              Positive connection/request timeout. Start with <code>30</code>;
+              increase it for a slow or remote Graylog instance.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Test connection</strong></td>
+            <td>
+              Calls Graylog <code>GET /api/cluster</code> using the values
+              currently in the form. It does not save changes.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Add server</strong></td>
+            <td>Saves a new server configuration in SQLite.</td>
+          </tr>
+          <tr>
+            <td><strong>Save changes</strong></td>
+            <td>
+              Updates the selected server. Blank API token preserves the
+              existing token.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Existing server</strong></td>
+            <td>
+              Select a saved server to load its editable values. The token is
+              never filled back into the form.
+            </td>
+          </tr>
+        </table>
+        <p>
+          <strong>Connection errors:</strong> the result identifies the endpoint
+          and provides details for timeout, TCP/DNS/port, TLS, or Graylog
+          HTTP/API errors. Tokens are not included in the displayed URL.
+        </p>
+      </section>
+      <section>
+        <h2>2. MCP Clients / Agents</h2>
+        <p>
+          Each client is restricted to one selected Graylog server and can later
+          be reassigned in the UI. Use the generated key as the Bearer token for
+          MCP or REST agent requests.
+        </p>
+        <table>
+          <tr>
+            <th>Field / action</th>
+            <th>What to enter or expect</th>
+          </tr>
+          <tr>
+            <td><strong>Client name</strong></td>
+            <td>
+              A recognizable name, for example <code>grafana-agent</code> or
+              <code>monitoring-agent</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>API key (optional)</strong></td>
+            <td>
+              Leave blank to generate a secure key, or provide your own key. The
+              raw key is shown only after creation.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Add client</strong></td>
+            <td>
+              Creates the agent for the currently selected Graylog server. Store
+              the returned key immediately; only its hash and last four
+              characters are retained.
+            </td>
+          </tr>
+        </table>
+        <pre>
+curl -H "Authorization: Bearer AGENT_API_KEY" http://localhost:8000/mcp</pre
+        >
+      </section>
+      <section>
+        <h2>3. Query Rules</h2>
+        <div class="card">
+          <h3>How template variables work</h3>
+          <p>
+            <code>${service}</code> is a placeholder, not a built-in Graylog
+            variable and not an automatically detected field. You choose the
+            variable name yourself. In
+            <code>service:${service} AND level:3</code>, the value is inserted
+            before the query is sent to Graylog.
+          </p>
+          <ol>
+            <li>
+              Put a placeholder in the query using <code>${name}</code>. Use
+              letters, numbers, and underscores; start with a letter or
+              underscore.
+            </li>
+            <li>
+              Set an optional fallback in
+              <strong>Default parameters JSON</strong>, for example
+              <code>{"service":"api"}</code>.
+            </li>
+            <li>
+              Supply or override the value when calling
+              <code>run_saved_query</code>, for example
+              <code>{"service":"web"}</code>. Call-time values take precedence
+              over defaults.
+            </li>
+          </ol>
+          <p>
+            There is no fixed list of variable names. Use descriptive names such
+            as <code>service</code>, <code>host</code>,
+            <code>environment</code>, or <code>status</code>. The direct
+            <strong>Graylog query (Lucene)</strong> field is sent as-is and does
+            not substitute variables.
+          </p>
+        </div>
+        <p>
+          Query rules are reusable definitions stored in SQLite. They can be
+          used by MCP agents through <code>run_saved_query</code>.
+        </p>
+        <table>
+          <tr>
+            <th>Field</th>
+            <th>What to enter</th>
+          </tr>
+          <tr>
+            <td><strong>Existing rule</strong></td>
+            <td>
+              Select an existing rule to edit. Use <strong>New rule</strong> to
+              clear the form.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Name</strong></td>
+            <td>
+              Unique rule name, for example <code>errors_by_service</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Description</strong></td>
+            <td>Short explanation shown to agents and administrators.</td>
+          </tr>
+          <tr>
+            <td><strong>Type</strong></td>
+            <td>
+              <code>messages</code> returns matching messages;
+              <code>aggregate</code> returns grouped metrics.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Time range (minutes)</strong></td>
+            <td>Positive relative time window, for example <code>60</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>Message limit</strong></td>
+            <td>
+              Maximum messages for message search, for example <code>100</code>.
+              The server applies its configured maximum.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Time bucket</strong></td>
+            <td>
+              Optional Graylog time unit for aggregation, for example
+              <code>5m</code>, <code>1h</code>, or <code>1d</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Lucene query template</strong></td>
+            <td>
+              Graylog/Lucene query, for example
+              <code>service:${service} AND level:3</code>. Template variables
+              use <code>${name}</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Group by JSON</strong></td>
+            <td>
+              JSON array of grouping objects, for example
+              <code>[{"field":"service"}]</code>. Use <code>[]</code> for no
+              grouping.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Metrics JSON</strong></td>
+            <td>
+              JSON array of Graylog metrics, for example
+              <code>[{"function":"count"}]</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Default parameters JSON</strong></td>
+            <td>
+              JSON object for template defaults, for example
+              <code>{"service":"api"}</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Instructions for the agent</strong></td>
+            <td>
+              Plain-language guidance about when and how the rule should be
+              used.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Save / New / Delete rule</strong></td>
+            <td>
+              Validate and persist, clear for a new rule, or permanently remove
+              the selected rule.
+            </td>
+          </tr>
+        </table>
+        <pre>
+curl -X POST http://localhost:8000/api/v1/queries/run   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"name":"errors_by_service","parameters":{"service":"api"}}'</pre
+        >
+      </section>
+      <section>
+        <h2>Graylog Metrics JSON reference</h2>
+        <p>
+          Use a JSON array. You can combine multiple metrics in one request. The
+          <code>field</code> must be a numeric or otherwise suitable field from
+          your Graylog messages, except for <code>count</code>. The optional
+          <code>sort</code> value can be <code>asc</code> or <code>desc</code>.
+        </p>
+        <table>
+          <tr>
+            <th>Function</th>
+            <th>Purpose</th>
+            <th>Example</th>
+          </tr>
+          <tr>
+            <td><code>count</code></td>
+            <td>Counts matching messages. No field is required.</td>
+            <td><code>[{"function":"count"}]</code></td>
+          </tr>
+          <tr>
+            <td><code>average</code></td>
+            <td>Arithmetic average of a numeric field.</td>
+            <td><code>[{"function":"average","field":"response_ms"}]</code></td>
+          </tr>
+          <tr>
+            <td><code>latest</code></td>
+            <td>Latest value of a field in the matching data.</td>
+            <td><code>[{"function":"latest","field":"status_code"}]</code></td>
+          </tr>
+          <tr>
+            <td><code>max</code></td>
+            <td>Highest value of a numeric field.</td>
+            <td><code>[{"function":"max","field":"response_ms"}]</code></td>
+          </tr>
+          <tr>
+            <td><code>min</code></td>
+            <td>Lowest value of a numeric field.</td>
+            <td><code>[{"function":"min","field":"response_ms"}]</code></td>
+          </tr>
+          <tr>
+            <td><code>percentile</code></td>
+            <td>
+              Percentile of a numeric field; configure it in
+              <code>configuration</code>.
+            </td>
+            <td>
+              <code
+                >[{"function":"percentile","field":"response_ms","configuration":{"percentile":95}}]</code
+              >
+            </td>
+          </tr>
+          <tr>
+            <td><code>stdDev</code></td>
+            <td>Standard deviation of a numeric field.</td>
+            <td><code>[{"function":"stdDev","field":"response_ms"}]</code></td>
+          </tr>
+          <tr>
+            <td><code>sum</code></td>
+            <td>Total of a numeric field.</td>
+            <td><code>[{"function":"sum","field":"bytes"}]</code></td>
+          </tr>
+          <tr>
+            <td><code>sumOfSquares</code></td>
+            <td>Sum of squared values of a numeric field.</td>
+            <td>
+              <code>[{"function":"sumOfSquares","field":"response_ms"}]</code>
+            </td>
+          </tr>
+          <tr>
+            <td><code>variance</code></td>
+            <td>Variance of a numeric field.</td>
+            <td>
+              <code>[{"function":"variance","field":"response_ms"}]</code>
+            </td>
+          </tr>
+        </table>
+        <h3>Combined example</h3>
+        <pre>
+[{"function":"count","id":"requests"},{"function":"average","field":"response_ms","id":"avg_response"},{"function":"percentile","field":"response_ms","configuration":{"percentile":95},"id":"p95_response"},{"function":"max","field":"response_ms","id":"max_response"}]</pre
+        >
+        <p class="muted">
+          Metric support and field availability depend on the Graylog version
+          and the fields present in your messages. If a metric fails, verify the
+          function spelling and field type.
+        </p>
+      </section>
+      <section>
+        <h2>4. Run a Graylog query</h2>
+        <p>
+          The first section also provides direct, one-off query controls. Choose
+          <strong>Message search</strong>, <strong>Aggregation</strong>, or
+          <strong>Managed query</strong>.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <h3>Message search</h3>
+            <p>
+              Enter a Lucene query, time range, and message limit. Example
+              query: <code>level:3 OR service:api</code>.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Aggregation</h3>
+            <p>
+              Enter a Lucene query, comma-separated grouping fields such as
+              <code>service,source</code>, and metrics JSON such as
+              <code>[{"function":"count"}]</code>.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Managed query</h3>
+            <p>
+              Select a saved Query Rule. Its stored query, parameters, grouping,
+              metrics, and limits are used.
+            </p>
+          </div>
+        </div>
+        <p>
+          <strong>Run query</strong> sends the request to the selected server.
+          <strong>Load streams</strong> lists Graylog streams for that server.
+          Results appear in the output panel.
+        </p>
+        <pre>
+curl -X POST http://localhost:8000/api/v1/search/messages   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"query":"level:3 OR service:api","minutes":15,"limit":20}'
+
+curl -X POST http://localhost:8000/api/v1/search/aggregate   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"query":"*","minutes":60,"group_by":[{"field":"service"}],"metrics":[{"function":"count"}]}'</pre
+        >
+      </section>
+      <section>
+        <h2>5. Audit Log</h2>
+        <p>
+          Searches recorded UI/API activity and Graylog calls stored in the
+          SQLite audit database.
+        </p>
+        <table>
+          <tr>
+            <th>Field / action</th>
+            <th>What to enter or expect</th>
+          </tr>
+          <tr>
+            <td><strong>Full-text search</strong></td>
+            <td>
+              FTS5 expression. Examples: <code>authentication OR timeout</code>,
+              a phrase such as <code>"connection failed"</code>, or a prefix
+              such as <code>error*</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Source</strong></td>
+            <td>
+              Filter by <code>graylog</code>, <code>openai</code>, or
+              <code>mcp</code>; leave <code>All sources</code> to include
+              everything.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Search audit log</strong></td>
+            <td>Runs the search and prints matching records as JSON.</td>
+          </tr>
+        </table>
+        <pre>
+curl "http://localhost:8000/api/v1/audit?q=authentication%20OR%20timeout&amp;source=graylog&amp;limit=100"   -H "Authorization: Bearer AGENT_API_KEY"</pre
+        >
+      </section>
+      <section>
+        <h2>6. REST and system commands</h2>
+        <p>
+          The REST API is under <code>/api/v1</code>. The interactive API
+          reference is available at <a href="/docs">/docs</a> and the OpenAPI
+          schema at <a href="/openapi.json">/openapi.json</a>.
+        </p>
+        <pre>
+curl http://localhost:8000/health
+
+curl http://localhost:8000/api/v1/streams   -H "Authorization: Bearer AGENT_API_KEY"
+
+curl http://localhost:8000/api/v1/queries   -H "Authorization: Bearer AGENT_API_KEY"</pre
+        >
+        <p>
+          For Docker, start or rebuild with
+          <code>docker compose up -d --build</code>. The UI is at
+          <code>http://localhost:8000/</code>; replace the host and port if
+          <code>MCP_PORT</code> is changed.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Sign in — Graylog MCP</title>
+    <link rel="stylesheet" href="/ui/assets/login.css" />
+  </head>
+  <body>
+    <main class="login-card">
+      <h1>Graylog MCP</h1>
+      <p>Sign in to the WebUI</p>
+      {error}
+      <form method="post" action="/login">
+        <label for="username">Username</label
+        ><input
+          id="username"
+          name="username"
+          autocomplete="username"
+          required
+          autofocus
+        /><label for="password">Password</label
+        ><input
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+        /><button type="submit">Sign in</button>
+      </form>
+    </main>
+  </body>
+</html>

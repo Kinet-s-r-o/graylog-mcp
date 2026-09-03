@@ -75,6 +75,8 @@ Goal: close externally exploitable gaps and establish deterministic request/sess
 
 ## Step 2 — P1: maintainable architecture and WebUI extraction
 
+**Status: implemented and covered by automated and browser smoke tests.**
+
 Goal: remove order-dependent code generation and separate responsibilities without changing the user-visible design.
 
 ### Target structure

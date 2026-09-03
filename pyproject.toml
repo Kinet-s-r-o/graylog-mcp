@@ -26,5 +26,8 @@ graylog-mcp = "graylog_mcp.server:main"
 [tool.setuptools.packages.find]
 include = ["graylog_mcp*"]
 
+[tool.setuptools.package-data]
+graylog_mcp = ["webui/*.html", "webui/*.css", "webui/*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
