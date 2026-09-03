@@ -21,7 +21,9 @@
           session-based login form.
         </p>
         <p>
-          <strong>Base URL:</strong> <code>http://localhost:8000</code> &nbsp;
+          <strong>WebUI URL:</strong> <code>http://localhost:8080</code> &nbsp;
+          <strong>MCP HTTP:</strong> <code>http://localhost:8081</code> &nbsp;
+          <strong>MCP HTTPS:</strong> <code>https://localhost:8443</code> &nbsp;
           <strong>Admin login:</strong> the configured
           <code>UI_USERNAME</code> and <code>UI_PASSWORD</code>.
         </p>
@@ -144,7 +146,7 @@
           </tr>
         </table>
         <pre>
-curl -H "Authorization: Bearer AGENT_API_KEY" http://localhost:8000/mcp</pre
+curl -H "Authorization: Bearer AGENT_API_KEY" http://localhost:8081/mcp</pre
         >
       </section>
       <section>
@@ -281,7 +283,7 @@ curl -H "Authorization: Bearer AGENT_API_KEY" http://localhost:8000/mcp</pre
           </tr>
         </table>
         <pre>
-curl -X POST http://localhost:8000/api/v1/queries/run   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"name":"errors_by_service","parameters":{"service":"api"}}'</pre
+curl -X POST http://localhost:8081/api/v1/queries/run   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"name":"errors_by_service","parameters":{"service":"api"}}'</pre
         >
       </section>
       <section>
@@ -407,9 +409,9 @@ curl -X POST http://localhost:8000/api/v1/queries/run   -H "Authorization: Beare
           Results appear in the output panel.
         </p>
         <pre>
-curl -X POST http://localhost:8000/api/v1/search/messages   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"query":"level:3 OR service:api","minutes":15,"limit":20}'
+curl -X POST http://localhost:8081/api/v1/search/messages   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"query":"level:3 OR service:api","minutes":15,"limit":20}'
 
-curl -X POST http://localhost:8000/api/v1/search/aggregate   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"query":"*","minutes":60,"group_by":[{"field":"service"}],"metrics":[{"function":"count"}]}'</pre
+curl -X POST http://localhost:8081/api/v1/search/aggregate   -H "Authorization: Bearer AGENT_API_KEY" -H "Content-Type: application/json"   -d '{"query":"*","minutes":60,"group_by":[{"field":"service"}],"metrics":[{"function":"count"}]}'</pre
         >
       </section>
       <section>
@@ -445,28 +447,33 @@ curl -X POST http://localhost:8000/api/v1/search/aggregate   -H "Authorization: 
           </tr>
         </table>
         <pre>
-curl "http://localhost:8000/api/v1/audit?q=authentication%20OR%20timeout&amp;source=graylog&amp;limit=100"   -H "Authorization: Bearer AGENT_API_KEY"</pre
+curl "http://localhost:8081/api/v1/audit?q=authentication%20OR%20timeout&amp;source=graylog&amp;limit=100"   -H "Authorization: Bearer AGENT_API_KEY"</pre
         >
       </section>
       <section>
         <h2>6. REST and system commands</h2>
         <p>
-          The REST API is under <code>/api/v1</code>. The interactive API
-          reference is available at <a href="/docs">/docs</a> and the OpenAPI
-          schema at <a href="/openapi.json">/openapi.json</a>.
+          The REST API is under <code>/api/v1</code> and is exposed through the
+          Caddy MCP listener. The interactive API reference is available at
+          <a href="http://localhost:8081/docs">http://localhost:8081/docs</a>
+          and the OpenAPI schema at
+          <a href="http://localhost:8081/openapi.json">http://localhost:8081/openapi.json</a>.
         </p>
         <pre>
-curl http://localhost:8000/health
+curl http://localhost:8081/health
 
-curl http://localhost:8000/api/v1/streams   -H "Authorization: Bearer AGENT_API_KEY"
+curl http://localhost:8081/api/v1/streams   -H "Authorization: Bearer AGENT_API_KEY"
 
-curl http://localhost:8000/api/v1/queries   -H "Authorization: Bearer AGENT_API_KEY"</pre
+curl http://localhost:8081/api/v1/queries   -H "Authorization: Bearer AGENT_API_KEY"</pre
         >
         <p>
           For Docker, start or rebuild with
-          <code>docker compose up -d --build</code>. The UI is at
-          <code>http://localhost:8000/</code>; replace the host and port if
-          <code>MCP_PORT</code> is changed.
+          <code>docker compose up -d --build</code>. The WebUI is at
+          <code>http://localhost:8080/</code> and MCP is at
+          <code>http://localhost:8081/mcp</code>. For HTTPS use the configured
+          Caddy HTTPS ports (defaults: 443 for WebUI and 8443 for MCP).
+          The internal <code>MCP_PORT</code> and <code>WEBUI_PORT</code> are not
+          published to the host.
         </p>
       </section>
     </main>

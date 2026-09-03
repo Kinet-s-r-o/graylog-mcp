@@ -22,6 +22,21 @@ http://:{$CADDY_WEBUI_HTTP_PORT} {
     }
 }
 
+# Optional plain-HTTP MCP entry point. The application MCP port is never
+# published on the host; this listener is the only HTTP route for MCP.
+http://:{$CADDY_MCP_HTTP_PORT} {
+    @mcp_http path {$MCP_PATH}* /api/v1* /docs* /openapi.json /redoc*
+    handle @mcp_http {
+        reverse_proxy graylog-mcp:{$MCP_PORT}
+    }
+    handle /health {
+        reverse_proxy graylog-mcp:{$MCP_PORT}
+    }
+    handle {
+        respond "Not Found" 404
+    }
+}
+
 {$CADDY_DOMAIN}:{$CADDY_WEBUI_HTTPS_PORT} {
     import tls_defaults
 
@@ -38,7 +53,8 @@ http://:{$CADDY_WEBUI_HTTP_PORT} {
     import tls_defaults
 
     # The MCP port exposes only MCP and its health endpoint.
-    handle {$MCP_PATH}* {
+    @mcp_https path {$MCP_PATH}* /api/v1* /docs* /openapi.json /redoc*
+    handle @mcp_https {
         reverse_proxy graylog-mcp:{$MCP_PORT}
     }
     handle /health {

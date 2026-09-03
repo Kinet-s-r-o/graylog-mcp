@@ -32,20 +32,20 @@ Nastavenia Caddy sú v `.env`:
 - `CADDY_EMAIL` je kontaktný e-mail pre ACME registráciu.
 - `CADDY_TLS_DIRECTIVE` nechajte prázdne pre Let’s Encrypt. Pre vlastný certifikát nastavte napr. `tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem` a súbory vložte do adresára `CADDY_CERTS_DIR` (predvolene `./caddy/certs`).
 - `CADDY_HTTP_PORT` zostáva vyhradený pre ACME overenie a automatické presmerovanie na HTTPS; pri verejnom Let's Encrypt nasadení má zostať na porte 80.
-- `CADDY_WEBUI_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty publikované na hostiteľovi bez úpravy `docker-compose.yml`. Predvolené hodnoty sú 8080 pre voliteľný HTTP WebUI, 443 pre HTTPS WebUI a 8443 pre HTTPS MCP.
-- `CADDY_HTTP_BIND`, `CADDY_WEBUI_HTTP_BIND`, `CADDY_WEBUI_BIND` a `CADDY_MCP_BIND` určujú hostiteľské rozhranie pre každý publikovaný port; `0.0.0.0` znamená všetky rozhrania a `127.0.0.1` iba lokálny prístup.
+- `CADDY_WEBUI_HTTP_PORT`, `CADDY_MCP_HTTP_PORT`, `CADDY_WEBUI_HTTPS_PORT` a `CADDY_MCP_HTTPS_PORT` menia porty publikované na hostiteľovi bez úpravy `docker-compose.yml`. Predvolené hodnoty sú 8080 pre voliteľný HTTP WebUI, 8081 pre voliteľné HTTP MCP, 443 pre HTTPS WebUI a 8443 pre HTTPS MCP.
+- `CADDY_HTTP_BIND`, `CADDY_WEBUI_HTTP_BIND`, `CADDY_MCP_HTTP_BIND`, `CADDY_WEBUI_BIND` a `CADDY_MCP_BIND` určujú hostiteľské rozhranie pre každý publikovaný port; `0.0.0.0` znamená všetky rozhrania a `127.0.0.1` iba lokálny prístup.
 
 Caddy uchováva ACME účty a certifikáty v `./caddy/data`, takže automatická obnova pretrvá aj po reštarte kontajnera. Po zmene certifikátu stačí reštartovať Caddy: `docker compose restart caddy`.
 
-Endpointy sú oddelené už v aplikácii a Caddy ich iba preposiela: voliteľný HTTP WebUI je na `http://logs.example.com:8080/`, HTTPS WebUI na `https://logs.example.com/` a MCP na `https://logs.example.com:8443/mcp`. `MCP_PORT` odmieta WebUI cesty a `WEBUI_PORT` odmieta MCP aj agentské `/api/v1` cesty. Caddy navyše blokuje MCP cestu na oboch WebUI listeneroch. Port 80 ostáva Caddy k dispozícii pre ACME a HTTPS presmerovanie.
+Endpointy sú oddelené už v aplikácii a Caddy ich iba preposiela: voliteľný HTTP WebUI je na `http://logs.example.com:8080/`, voliteľný HTTP MCP na `http://logs.example.com:8081/mcp`, HTTPS WebUI na `https://logs.example.com/` a HTTPS MCP na `https://logs.example.com:8443/mcp`. `MCP_PORT` odmieta WebUI cesty a `WEBUI_PORT` odmieta MCP aj agentské `/api/v1` cesty. Caddy navyše blokuje MCP cestu na oboch WebUI listeneroch. Port 80 ostáva Caddy k dispozícii pre ACME a HTTPS presmerovanie.
 
 Pre verejný HTTP WebUI cez Caddy a obe natívne rozhrania dostupné iba lokálne použite napríklad `MCP_BIND=127.0.0.1`, `WEBUI_BIND=127.0.0.1`, `CADDY_WEBUI_HTTP_BIND=0.0.0.0`, `CADDY_WEBUI_HTTP_PORT=8080` a `UI_COOKIE_SECURE=false`. `MCP_HOST` aj `WEBUI_HOST` ponechajte na `0.0.0.0`, aby sa k nim Caddy dostal cez internú Docker sieť. Čisté HTTP nešifruje prihlasovacie údaje ani session cookie; pre nedôveryhodnú sieť používajte HTTPS a `UI_COOKIE_SECURE=true`.
 
-MCP endpoint pre agenta je `http://localhost:8000/mcp` (hodnoty portu a cesty sú v `.env`). Health check je na `/health`.
-Web UI is available directly at `http://localhost:8001/` (`WEBUI_PORT`) and uses a session-based login form at `/login` with `UI_USERNAME` and `UI_PASSWORD`. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
+MCP endpoint pre agenta je cez Caddy `http://localhost:8081/mcp` (alebo HTTPS `https://localhost:8443/mcp`; hodnoty portov a cesty sú v `.env`). Natívny `MCP_PORT=8000` je interný Compose port a nie je publikovaný na hostiteľovi. Health check je na `/health`.
+Web UI is available through Caddy at `http://localhost:8080/` (optional HTTP) or `https://localhost/` (HTTPS) and uses a session-based login form at `/login` with `UI_USERNAME` and `UI_PASSWORD`. The native `WEBUI_PORT=8001` is internal to the Compose network and is not published. It contains `Graylog Servers`, `MCP Clients`, `Query Rules`, and `Audit Log` sections. The floating navigation changes to a hamburger menu on mobile. Graylog servers can be added, edited, and tested; leaving the API token blank while editing preserves the existing token.
 
 Query rules are managed in SQLite from the `Query Rules` UI section. A rule controls the Lucene filter, message/aggregation mode, time range, result limit, grouping, metrics, time bucket, default template parameters, and agent instructions. Definitions from `queries.yaml` are imported only as initial defaults and can then be edited in the UI.
-Agentské REST API je dostupné iba na `MCP_PORT` pod `/api/v1`, interaktívna Swagger dokumentácia na `http://localhost:8000/docs` a OpenAPI schéma na `/openapi.json`. Administračné `/ui/api` je dostupné iba na `WEBUI_PORT`.
+Agentské REST API je dostupné cez Caddy MCP port (`http://localhost:8081/api/v1` alebo `https://localhost:8443/api/v1`), interaktívna Swagger dokumentácia cez `http://localhost:8081/docs` alebo `https://localhost:8443/docs` a OpenAPI schéma na `/openapi.json`. Natívny `MCP_PORT=8000` je interný Compose port a nie je publikovaný. Administračné `/ui/api` je dostupné cez Caddy WebUI port.
 
 MCP klient sa pripája na `/mcp` cez `Authorization: Bearer <agent-api-key>`. Rovnaký Bearer kľúč vyžadujú všetky `/api/v1` endpointy okrem `/health`. Každý agent je databázovo viazaný na jeden Graylog server; server sa vyberá podľa API kľúča a klient ho nemôže zmeniť. Výsledky `/api/v1/audit` sú obmedzené na záznamy daného klienta. Admin operácie v UI sú chránené oddelenými `UI_USERNAME`/`UI_PASSWORD` údajmi, CSRF tokenom a obmedzením neúspešných prihlásení.
 
@@ -63,8 +63,8 @@ Príklady REST volaní:
 
 ```powershell
 $headers = @{ Authorization = "Bearer AGENT_API_KEY" }
-Invoke-RestMethod http://localhost:8000/api/v1/search/messages -Headers $headers -Method Post -ContentType 'application/json' -Body '{"query":"level:3","minutes":15,"limit":20}'
-Invoke-RestMethod http://localhost:8000/api/v1/search/aggregate -Headers $headers -Method Post -ContentType 'application/json' -Body '{"query":"*","minutes":60,"group_by":[{"field":"service"}],"metrics":[{"function":"count"}]}'
+Invoke-RestMethod http://localhost:8081/api/v1/search/messages -Headers $headers -Method Post -ContentType 'application/json' -Body '{"query":"level:3","minutes":15,"limit":20}'
+Invoke-RestMethod http://localhost:8081/api/v1/search/aggregate -Headers $headers -Method Post -ContentType 'application/json' -Body '{"query":"*","minutes":60,"group_by":[{"field":"service"}],"metrics":[{"function":"count"}]}'
 ```
 Audit databáza SQLite sa ukladá do `./data/audit.db` a eviduje AI otázky/odpovede aj Graylog API volania/odpovede. Citlivé polia konfigurované cez `AUDIT_REDACT_FIELDS` sa pred zápisom nahradia hodnotou `[REDACTED]`. Retenciu nastavujú `AUDIT_RETENTION_DAYS`, `AUDIT_MAX_ROWS` a `AUDIT_MAX_PAYLOAD_CHARS`; čistenie prebieha pri štarte a po každom zápise.
 Audit log obsahuje aj SQLite FTS5 fulltext index. Vo web UI ho možno prehľadávať podľa slov, fráz, prefixov (`timeout*`) a boolean výrazov (`error OR failed`), s voliteľným filtrovaním podľa zdroja.
