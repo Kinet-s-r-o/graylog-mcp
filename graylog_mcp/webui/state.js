@@ -4,6 +4,7 @@ export const state = {
   queries: [],
   auditPage: 1,
   auditData: null,
+  auditRefreshTimer: null,
   querySort: { key: "name", direction: 1 },
   filters: { servers: {}, agents: {}, queries: {}, audit: {} },
   modal: { kind: "", item: null, initialValues: [] },

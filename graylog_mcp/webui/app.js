@@ -81,6 +81,20 @@ async function loadAudit(page = 1) {
   }
 }
 
+function configureAuditRefresh() {
+  if (state.auditRefreshTimer) {
+    clearInterval(state.auditRefreshTimer);
+    state.auditRefreshTimer = null;
+  }
+  const seconds = Number($("auditRefresh").value);
+  if (!seconds) return;
+  state.auditRefreshTimer = setInterval(() => {
+    if ($("auditSection").classList.contains("active")) {
+      loadAudit(state.auditPage);
+    }
+  }, seconds * 1000);
+}
+
 configureModalRefresh({
   servers: loadServers,
   agents: loadAgents,
@@ -118,6 +132,10 @@ const actions = {
   "test-server": () => testServer(),
   "search-audit": () => loadAudit(1),
   "audit-page-size": () => loadAudit(1),
+  "audit-refresh": () => {
+    configureAuditRefresh();
+    return loadAudit(state.auditPage);
+  },
   "audit-page": (button) =>
     loadAudit(state.auditPage + Number(button.dataset.delta)),
   "edit-server": (button) => openServer(item("server", button.dataset.id)),
@@ -186,8 +204,8 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("change", (event) => {
-  const control = event.target.closest('[data-action="audit-page-size"]');
-  if (control) actions[control.dataset.action](control);
+  const control = event.target.closest('[data-action^="audit-"]');
+  if (control) actions[control.dataset.action]?.(control);
 });
 
 $("editForm").addEventListener("submit", submit);
@@ -195,3 +213,4 @@ window.addEventListener("hashchange", () => showSection(sectionFromHash()));
 
 initializeTheme();
 showSection(sectionFromHash());
+configureAuditRefresh();

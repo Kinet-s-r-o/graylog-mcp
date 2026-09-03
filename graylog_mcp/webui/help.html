@@ -445,6 +445,10 @@ curl -X POST http://localhost:8081/api/v1/search/aggregate   -H "Authorization: 
             <td><strong>Search audit log</strong></td>
             <td>Runs the search and prints matching records as JSON.</td>
           </tr>
+          <tr>
+            <td><strong>Auto-refresh</strong></td>
+            <td>Automatically reloads the current audit page at the selected interval. Choose <em>Off</em> to disable it.</td>
+          </tr>
         </table>
         <pre>
 curl "http://localhost:8081/api/v1/audit?q=authentication%20OR%20timeout&amp;source=graylog&amp;limit=100"   -H "Authorization: Bearer AGENT_API_KEY"</pre
