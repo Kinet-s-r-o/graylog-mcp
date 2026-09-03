@@ -86,6 +86,15 @@ function auditJson(value) {
   }
 }
 
+function auditQueryRule(item) {
+  if (!item.request_json) return "—";
+  try {
+    return JSON.parse(item.request_json).query_rule || "—";
+  } catch {
+    return "—";
+  }
+}
+
 export function renderAudit(data) {
   state.auditData = data;
   state.auditPage = data.page || 1;
@@ -101,10 +110,10 @@ export function renderAudit(data) {
     return;
   }
   $("auditOut").innerHTML =
-    `<table class="audit-table"><thead><tr><th>ID</th><th>Created</th>${filterHeader("Source", "audit", "source")}${filterHeader("MCP client", "audit", "agent_name")}${filterHeader("Client IP", "audit", "client_ip")}${filterHeader("Operation", "audit", "operation")}<th>Duration</th>${filterHeader("Result", "audit", "result")}<th>Details</th></tr></thead><tbody>${rows
+    `<table class="audit-table"><thead><tr><th>ID</th><th>Created</th>${filterHeader("Source", "audit", "source")}${filterHeader("MCP client", "audit", "agent_name")}${filterHeader("Client IP", "audit", "client_ip")}<th>Query rule</th>${filterHeader("Operation", "audit", "operation")}<th>Duration</th>${filterHeader("Result", "audit", "result")}<th>Details</th></tr></thead><tbody>${rows
       .map(
         (item) =>
-          `<tr><td>${escapeHtml(item.id)}</td><td>${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.source)}</td><td>${escapeHtml(item.agent_name || "—")}</td><td>${escapeHtml(item.client_ip || "—")}</td><td>${escapeHtml(item.operation)}</td><td>${item.duration_ms === null || item.duration_ms === undefined ? "—" : escapeHtml(`${Number(item.duration_ms).toFixed(1)} ms`)}</td><td class="${item.success ? "success" : "failed"}">${item.result}${item.status_code ? `<br><small>${escapeHtml(item.status_code)}</small>` : ""}</td><td><details class="audit-detail"><summary>Request / response${item.error ? " / error" : ""}</summary>${item.request_json ? `<strong>Request</strong><pre>${auditJson(item.request_json)}</pre>` : ""}${item.response_json ? `<strong>Response</strong><pre>${auditJson(item.response_json)}</pre>` : ""}${item.error ? `<strong>Error</strong><pre>${escapeHtml(item.error)}</pre>` : ""}</details></td></tr>`,
+          `<tr><td>${escapeHtml(item.id)}</td><td>${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.source)}</td><td>${escapeHtml(item.agent_name || "—")}</td><td>${escapeHtml(item.client_ip || "—")}</td><td>${escapeHtml(auditQueryRule(item))}</td><td>${escapeHtml(item.operation)}</td><td>${item.duration_ms === null || item.duration_ms === undefined ? "—" : escapeHtml(`${Number(item.duration_ms).toFixed(1)} ms`)}</td><td class="${item.success ? "success" : "failed"}">${item.result}${item.status_code ? `<br><small>${escapeHtml(item.status_code)}</small>` : ""}</td><td><details class="audit-detail"><summary>Request / response${item.error ? " / error" : ""}</summary>${item.request_json ? `<strong>Request</strong><pre>${auditJson(item.request_json)}</pre>` : ""}${item.response_json ? `<strong>Response</strong><pre>${auditJson(item.response_json)}</pre>` : ""}${item.error ? `<strong>Error</strong><pre>${escapeHtml(item.error)}</pre>` : ""}</details></td></tr>`,
       )
       .join("")}</tbody></table>`;
 }

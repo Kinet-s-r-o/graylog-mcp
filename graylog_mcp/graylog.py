@@ -29,7 +29,8 @@ class GraylogClient:
     async def close(self):
         await self.client.aclose()
 
-    async def request(self, method: str, path: str, *, params=None, json=None) -> Any:
+    async def request(self, method: str, path: str, *, params=None, json=None,
+                      query_rule: str | None = None) -> Any:
         started = stopwatch()
         context = agent_context.get() or {}
         agent_id = context.get("agent_id")
@@ -40,28 +41,41 @@ class GraylogClient:
                 raise GraylogError(f"Graylog API returned HTTP {response.status_code} for {path}")
             result = response.json() if response.content else {}
             if self.audit:
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id, client_ip=client_ip)
+                audit_request = {"params": params, "json": json}
+                if query_rule:
+                    audit_request["query_rule"] = query_rule
+                await self.audit.record(source="graylog", operation=f"{method} {path}", request=audit_request, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id, client_ip=client_ip)
             return result
         except Exception as exc:
             if self.audit:
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request={"params": params, "json": json}, status_code=getattr(locals().get("response", None), "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc), agent_id=agent_id, client_ip=client_ip)
+                audit_request = {"params": params, "json": json}
+                if query_rule:
+                    audit_request["query_rule"] = query_rule
+                await self.audit.record(source="graylog", operation=f"{method} {path}", request=audit_request, status_code=getattr(locals().get("response", None), "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc), agent_id=agent_id, client_ip=client_ip)
             raise
 
-    async def search_messages(self, query: str, minutes: int = 15, limit: int = 100, fields: list[str] | None = None):
+    async def search_messages(self, query: str, minutes: int = 15, limit: int = 100,
+                              fields: list[str] | None = None,
+                              query_rule: str | None = None):
         limit = max(1, min(limit, self.settings.graylog_max_limit))
         body = {"query": query, "size": limit, "sort": "timestamp", "sort_order": "desc",
                 "timerange": {"type": "relative", "range": max(60, minutes * 60)}}
         if fields:
             body["fields"] = fields
+        if query_rule:
+            return await self.request("POST", "/api/search/messages", json=body, query_rule=query_rule)
         return await self.request("POST", "/api/search/messages", json=body)
 
     async def aggregate(self, query: str, minutes: int = 60, group_by: list[dict[str, Any]] | None = None,
-                        metrics: list[dict[str, Any]] | None = None, interval: str | None = None):
+                        metrics: list[dict[str, Any]] | None = None, interval: str | None = None,
+                        query_rule: str | None = None):
         body = {"query": query, "timerange": {"type": "relative", "range": max(60, minutes * 60)},
                 "group_by": list(group_by or []), "metrics": list(metrics or [{"function": "count", "id": "count"}]),
                 }
         if interval:
             body["group_by"].append({"field": "timestamp", "timeunit": interval})
+        if query_rule:
+            return await self.request("POST", "/api/search/aggregate", json=body, query_rule=query_rule)
         return await self.request("POST", "/api/search/aggregate", json=body)
 
     async def streams(self):

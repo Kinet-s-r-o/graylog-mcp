@@ -174,6 +174,22 @@ function item(kind, target) {
   return state.queries.find((entry) => entry.name === target);
 }
 
+function editRule(button) {
+  const selected = item("rule", button.dataset.name);
+  if (selected) openRule(selected, false);
+}
+
+function duplicateRule(button) {
+  const selected = item("rule", button.dataset.name);
+  if (!selected) return;
+  const names = new Set(state.queries.map((query) => query.name));
+  const baseName = `${selected.name} (copy)`;
+  let copyName = baseName;
+  let suffix = 2;
+  while (names.has(copyName)) copyName = `${baseName} ${suffix++}`;
+  openRule({ ...selected, name: copyName }, true);
+}
+
 const actions = {
   "toggle-menu": () => toggleMenu(),
   "toggle-theme": () => toggleTheme(),
@@ -201,17 +217,8 @@ const actions = {
     loadAudit(state.auditPage + Number(button.dataset.delta)),
   "edit-server": (button) => openServer(item("server", button.dataset.id)),
   "edit-agent": (button) => openAgent(item("agent", button.dataset.id)),
-  "edit-rule": (button) => openRule(item("rule", button.dataset.name)),
-  "duplicate-rule": (button) => {
-    const selected = item("rule", button.dataset.name);
-    if (!selected) return;
-    const names = new Set(state.queries.map((query) => query.name));
-    const baseName = `${selected.name} (copy)`;
-    let copyName = baseName;
-    let suffix = 2;
-    while (names.has(copyName)) copyName = `${baseName} ${suffix++}`;
-    openRule({ ...selected, name: copyName }, true);
-  },
+  "edit-rule": editRule,
+  "duplicate-rule": duplicateRule,
   "delete-server": (button) => {
     const selected = item("server", button.dataset.id);
     if (selected) openDelete("server", selected.id, selected.name);

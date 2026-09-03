@@ -55,12 +55,14 @@ class QueryService:
                 query.get("group_by"),
                 query.get("metrics"),
                 query.get("interval"),
+                name,
             )
         return await client.search_messages(
             query["query"],
             query.get("minutes", 15),
             query.get("limit") or self.settings.graylog_default_limit,
             query.get("fields"),
+            name,
         )
 
     async def execute_tool(self, name: str, args: dict[str, Any]):
