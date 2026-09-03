@@ -252,6 +252,7 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         agent_token = None
         audit_agent_id = None
         audit_mcp_request = False
+        audit_mcp_payload = None
         try:
             if listener_port not in {settings.mcp_port, settings.webui_port}:
                 response = PlainTextResponse("Not Found", status_code=404)
@@ -281,6 +282,13 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
                     agent_token = agent_context.set(context)
                     audit_agent_id = context.get("agent_id")
                     audit_mcp_request = True
+                    if request.method not in {"GET", "HEAD"}:
+                        raw_body = await request.body()
+                        if raw_body:
+                            try:
+                                audit_mcp_payload = json.loads(raw_body)
+                            except (TypeError, ValueError):
+                                audit_mcp_payload = raw_body.decode("utf-8", errors="replace")
                     response = await call_next(request)
             elif (
                 (path.startswith("/ui/api/") or path == "/logout")
@@ -314,6 +322,7 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
                     request={
                         "query": dict(request.query_params),
                         "content_type": request.headers.get("content-type"),
+                        "body": audit_mcp_payload,
                     },
                     status_code=response.status_code if response is not None else None,
                     duration_ms=(time.perf_counter() - started) * 1000,

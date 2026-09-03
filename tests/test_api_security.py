@@ -153,6 +153,11 @@ def test_authorization_csrf_and_agent_scoped_audit(monkeypatch, tmp_path):
         assert "owned" in operations
         assert "POST /mcp" in operations
         assert "other" not in operations
+        mcp_record = next(
+            item for item in scoped.json()["items"] if item["operation"] == "POST /mcp"
+        )
+        assert '"method": "initialize"' in mcp_record["request_json"]
+        assert '"clientInfo"' in mcp_record["request_json"]
 
         assert client.get("/logout").status_code in {404, 405}
         assert client.post("/logout").status_code == 403
