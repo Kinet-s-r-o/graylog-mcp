@@ -304,6 +304,7 @@ body.dark .theme {
 }
 .audit-actions {
   justify-content: flex-end;
+  margin-top: 1rem;
 }
 .audit-page-size {
   display: flex;
@@ -525,11 +526,18 @@ body.dark .audit-table td {
   background: #991b1b !important;
 }
 .delete-button {
-  background: #f3a6a6 !important;
-  color: #7f1d1d !important;
+  background: #dc2626 !important;
+  color: #fff !important;
 }
 .delete-button:hover {
-  background: #ee8f8f !important;
+  background: #b91c1c !important;
+}
+.copy-button {
+  background: #c47a00 !important;
+  color: #fff !important;
+}
+.copy-button:hover {
+  background: #a86200 !important;
 }
 body.dark .table-row:hover {
   background: #102b48;
@@ -542,11 +550,18 @@ body.dark .modal-close {
   color: #c5d8ed;
 }
 body.dark .delete-button {
-  background: #b96f73 !important;
-  color: #fff1f2 !important;
+  background: #dc2626 !important;
+  color: #fff !important;
 }
 body.dark .delete-button:hover {
-  background: #ca7b80 !important;
+  background: #b91c1c !important;
+}
+body.dark .copy-button {
+  background: #c47a00 !important;
+  color: #fff !important;
+}
+body.dark .copy-button:hover {
+  background: #a86200 !important;
 }
 body.dark .sort-header:hover {
   color: #60a5fa;
