@@ -49,10 +49,10 @@ class AdminAuth:
         )
 
 
-def create_admin_auth(settings: Settings, trusted_proxy_networks: tuple) -> AdminAuth:
+def create_admin_auth(settings: Settings, trusted_proxy_networks: tuple, *, sessions=None) -> AdminAuth:
     return AdminAuth(
         settings=settings,
-        sessions=SessionStore(settings.ui_session_ttl_seconds, settings.ui_max_sessions),
+        sessions=sessions or SessionStore(settings.ui_session_ttl_seconds, settings.ui_max_sessions),
         throttle=LoginThrottle(
             settings.ui_login_max_attempts,
             settings.ui_login_window_seconds,
@@ -60,4 +60,3 @@ def create_admin_auth(settings: Settings, trusted_proxy_networks: tuple) -> Admi
         ),
         trusted_proxy_networks=trusted_proxy_networks,
     )
-

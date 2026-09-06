@@ -5,32 +5,41 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..auth.agent import AgentAuth
 from ..services.graylog_service import GraylogService
 from ..services.query_service import QueryService
+from ..services.adapters import GraylogOperations, RESTToolAdapter
 from ..settings import Settings
 from .schemas import AggregateRequest, SavedQueryRequest, SearchRequest
+from .versioning import version_headers
 
 
 def create_agent_router(
-    settings: Settings, graylog: GraylogService, queries: QueryService, auth: AgentAuth
+    settings: Settings, graylog: GraylogService, queries: QueryService, auth: AgentAuth,
+    adapter: RESTToolAdapter | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
+    adapter = adapter or RESTToolAdapter(GraylogOperations(graylog, queries))
 
     @router.post("/search/messages", tags=["Graylog"])
     async def search_messages(body: SearchRequest, _agent=Depends(auth.require)):
-        client = await graylog.client()
-        return await client.search_messages(
-            body.query, body.minutes, body.limit or settings.graylog_default_limit, body.fields
+        return await adapter.search_messages(
+            query=body.query,
+            minutes=body.minutes,
+            limit=body.limit or settings.graylog_default_limit,
+            fields=body.fields,
         )
 
     @router.post("/search/aggregate", tags=["Graylog"])
     async def aggregate(body: AggregateRequest, _agent=Depends(auth.require)):
-        client = await graylog.client()
-        return await client.aggregate(
-            body.query, body.minutes, body.group_by, body.metrics, body.interval
+        return await adapter.aggregate(
+            query=body.query,
+            minutes=body.minutes,
+            group_by=body.group_by,
+            metrics=body.metrics,
+            interval=body.interval,
         )
 
     @router.get("/streams", tags=["Graylog"])
     async def streams(_agent=Depends(auth.require)):
-        return await (await graylog.client()).streams()
+        return await adapter.streams()
 
     @router.get("/queries", tags=["Saved queries"])
     async def saved_queries(_agent=Depends(auth.require)):
@@ -52,9 +61,9 @@ def create_agent_router(
         agent=Depends(auth.require),
     ):
         agent_id = int(agent["agent_id"])
-        total = await queries.audit.count_recent(q, source, agent_id)
+        total = await queries.audit_count(q, source, agent_id)
         return {
-            "items": await queries.audit.recent(
+            "items": await queries.audit_recent(
                 limit, q, source, (page - 1) * limit, agent_id
             ),
             "total": total,
@@ -64,4 +73,3 @@ def create_agent_router(
         }
 
     return router
-

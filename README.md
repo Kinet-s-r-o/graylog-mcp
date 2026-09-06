@@ -84,6 +84,20 @@ Queries are created and edited in the `Query Rules` section of the Web UI and pe
 
 Native tools: `search_messages`, `aggregate`, `list_streams`, `list_saved_queries`, `run_saved_query`, and `ask_graylog`.
 
+### API compatibility and extension points
+
+The `/api/v1` contract is versioned by the `X-API-Version: 1` response header.
+Existing response payloads remain unchanged for compatibility; errors use the
+stable public error shape (`code`, `detail`, and `request_id`). New API versions
+will be introduced under a new path or after a documented deprecation period.
+
+The application factory accepts optional repository, secret-provider, and
+session-store implementations. The bundled SQLite repository, local Fernet
+secret cipher, and bounded in-process sessions remain the defaults. Custom
+implementations only need to follow the protocols in
+`graylog_mcp/persistence/protocols.py`; route and authentication code does not
+need to be changed.
+
 ## Poznámky
 
 Server používa Graylog Search Scripting API endpointy `/api/search/messages` a `/api/search/aggregate`. Graylog autentifikácia používa API token v Basic Auth formáte `TOKEN:token`; nastavuje sa cez `GRAYLOG_API_TOKEN`. Agregačné `group_by` položky používajú Graylog formát, napr. `{field: service}`; časové buckety možno pridať cez `interval`. Pri staršej alebo výrazne customizovanej verzii Graylogu sa endpointy dajú zmeniť v `graylog_mcp/graylog.py`. Do produkcie odporúčam HTTPS/reverse proxy pred MCP endpointom a Graylog používateľa s minimálnymi potrebnými právami.

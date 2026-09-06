@@ -26,7 +26,10 @@ from .openai_agent import OpenAIAgent
 from .security import agent_context, ip_allowed, parse_networks
 from .services.graylog_service import GraylogService
 from .services.query_service import QueryService
+from .services.adapters import GraylogOperations, MCPToolAdapter, RESTToolAdapter
+from .services.admin_service import AdminService
 from .settings import Settings
+from .api.versioning import API_VERSION_HEADER, API_VERSION
 
 log = logging.getLogger(__name__)
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -109,10 +112,16 @@ def _install_error_handlers(app: FastAPI) -> None:
         )
 
 
-def create_app(configuration: Settings | None = None) -> FastAPI:
+def create_app(
+    configuration: Settings | None = None,
+    *,
+    repository: Any | None = None,
+    secret_provider: Any | None = None,
+    session_store: Any | None = None,
+) -> FastAPI:
     settings = configuration or Settings()
     logging.basicConfig(level=settings.log_level)
-    audit = AuditStore(
+    audit = repository or AuditStore(
         settings.audit_db_path,
         settings.audit_retention_days,
         settings.audit_max_rows,
@@ -123,13 +132,17 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
             else None
         ),
         redact_fields=settings.audit_redacted_field_names,
+        secret_provider=secret_provider,
     )
     catalog = QueryCatalog(settings.query_catalog_path)
     trusted_proxies = parse_networks(settings.trusted_proxy_networks)
-    admin_auth = create_admin_auth(settings, trusted_proxies)
+    admin_auth = create_admin_auth(settings, trusted_proxies, sessions=session_store)
     agent_auth = AgentAuth(audit, trusted_proxies)
     graylog = GraylogService(settings, audit)
     queries = QueryService(settings, audit, graylog)
+    operations = GraylogOperations(graylog, queries)
+    mcp_adapter = MCPToolAdapter(operations)
+    admin_service = AdminService(audit, graylog, queries)
     assets = WebUIAssets()
     mcp = FastMCP(
         "custom-graylog",
@@ -149,9 +162,9 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         fields: list[str] | None = None,
     ) -> str:
         """Search Graylog messages with a Lucene query over a relative time window."""
-        client = await graylog.client()
-        result = await client.search_messages(
-            query, minutes, limit or settings.graylog_default_limit, fields
+        result = await mcp_adapter.invoke(
+            "search_messages",
+            {"query": query, "minutes": minutes, "limit": limit or settings.graylog_default_limit, "fields": fields},
         )
         return json.dumps(result, ensure_ascii=False)
 
@@ -164,20 +177,21 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         interval: str = "5m",
     ) -> str:
         """Run a Graylog aggregation. Metrics follow Graylog's aggregate API format."""
-        result = await (await graylog.client()).aggregate(
-            query, minutes, group_by, metrics, interval
+        result = await mcp_adapter.invoke(
+            "aggregate",
+            {"query": query, "minutes": minutes, "group_by": group_by, "metrics": metrics, "interval": interval},
         )
         return json.dumps(result, ensure_ascii=False)
 
     @mcp.tool()
     async def list_streams() -> str:
         """List Graylog streams."""
-        return json.dumps(await (await graylog.client()).streams(), ensure_ascii=False)
+        return json.dumps(await mcp_adapter.invoke("list_streams", {}), ensure_ascii=False)
 
     @mcp.tool()
     async def list_saved_queries() -> str:
         """List database-managed query templates and their agent instructions."""
-        return json.dumps({"queries": await queries.summaries()}, ensure_ascii=False)
+        return json.dumps(await mcp_adapter.invoke("list_saved_queries", {}), ensure_ascii=False)
 
     @mcp.tool()
     async def run_saved_query(
@@ -185,7 +199,8 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
     ) -> str:
         """Run a database-managed query template with parameter overrides."""
         return json.dumps(
-            await queries.execute_saved(name, parameters or {}), ensure_ascii=False
+            await mcp_adapter.invoke("run_saved_query", {"name": name, "parameters": parameters or {}}),
+            ensure_ascii=False,
         )
 
     @mcp.tool()
@@ -197,8 +212,10 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        await audit.open()
-        await audit.seed_queries(catalog.queries)
+        if hasattr(audit, "open"):
+            await audit.open()
+        if hasattr(audit, "seed_queries"):
+            await audit.seed_queries(catalog.queries)
         try:
             # Mounted Starlette applications do not run their own lifespan.
             # FastMCP's Streamable HTTP transport therefore has to be started
@@ -207,7 +224,8 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
                 yield
         finally:
             await graylog.close()
-            await audit.close()
+            if hasattr(audit, "close"):
+                await audit.close()
 
     app = FastAPI(
         title="Custom Graylog MCP API",
@@ -222,6 +240,9 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         "mcp": mcp,
         "graylog": graylog,
         "queries": queries,
+        "operations": operations,
+        "mcp_adapter": mcp_adapter,
+        "admin_service": admin_service,
         "admin_auth": admin_auth,
         "agent_auth": agent_auth,
         "tools": {
@@ -340,9 +361,11 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         response.headers.setdefault(
-            "Content-Security-Policy",
+        "Content-Security-Policy",
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; style-src 'self'; script-src 'self'",
         )
+        if path.startswith("/api/v1") or path.startswith(settings.mcp_path):
+            response.headers.setdefault(API_VERSION_HEADER, API_VERSION)
         if _is_webui_path(path):
             response.headers.setdefault("Cache-Control", "no-store")
         log.info(
@@ -363,9 +386,13 @@ def create_app(configuration: Settings | None = None) -> FastAPI:
     async def health():
         return {"status": "ok", "service": "custom-graylog-mcp"}
 
-    app.include_router(create_agent_router(settings, graylog, queries, agent_auth))
     app.include_router(
-        create_admin_router(settings, audit, graylog, queries, admin_auth, assets)
+        create_agent_router(settings, graylog, queries, agent_auth, RESTToolAdapter(operations))
+    )
+    app.include_router(
+        create_admin_router(
+            settings, audit, graylog, queries, admin_auth, assets, admin_service
+        )
     )
     app.mount("/ui/assets", StaticFiles(directory=WEBUI_DIR), name="webui-assets")
     app.mount("/", mcp.streamable_http_app())

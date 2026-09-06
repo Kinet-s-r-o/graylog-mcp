@@ -13,9 +13,10 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 
 from ..auth.admin import AdminAuth, SESSION_COOKIE
 from ..audit import AuditStore
-from ..graylog import GraylogClient, GraylogError
+from ..graylog import GraylogError
 from ..services.graylog_service import GraylogService
 from ..services.query_service import QueryService
+from ..services.admin_service import AdminService
 from ..settings import Settings
 from .schemas import (
     AgentCreate,
@@ -109,8 +110,10 @@ def create_admin_router(
     queries: QueryService,
     auth: AdminAuth,
     assets: WebUIAssets,
+    service: AdminService | None = None,
 ) -> APIRouter:
     router = APIRouter()
+    service = service or AdminService(audit, graylog, queries)
 
     @router.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
@@ -176,20 +179,20 @@ def create_admin_router(
 
     @admin.get("/queries")
     async def list_queries():
-        return {"queries": await audit.list_queries()}
+        return {"queries": await queries.definitions()}
 
     @admin.post("/queries")
     async def save_query(body: QueryDefinitionInput):
         data = body.model_dump()
         name = data.pop("name")
-        return await audit.save_query(name, data)
+        return await queries.save_definition({"name": name, **data})
 
     @admin.get("/queries/export")
     async def export_queries():
         output = io.StringIO(newline="")
         writer = csv.DictWriter(output, fieldnames=QUERY_CSV_FIELDS, lineterminator="\r\n")
         writer.writeheader()
-        for query in await audit.list_queries():
+        for query in await queries.definitions():
             row = {field: query.get(field, "") for field in QUERY_CSV_FIELDS}
             for field in QUERY_CSV_JSON_FIELDS:
                 row[field] = _csv_json(query.get(field, [] if field != "defaults" else {}))
@@ -235,23 +238,18 @@ def create_admin_router(
         if not validated:
             raise HTTPException(status_code=400, detail="CSV contains no data rows.")
         for name, data in validated:
-            await audit.save_query(name, data)
+            await queries.save_definition({"name": name, **data})
         return {"imported": len(validated), "names": [name for name, _ in validated]}
 
     @admin.delete("/queries")
     async def delete_query(name: str = Query(min_length=1, max_length=128)):
         clean_name = SavedQueryRequest(name=name).name
-        await audit.remove_query(clean_name)
+        await queries.delete_definition(clean_name)
         return {"deleted": True}
 
     @admin.post("/query")
     async def execute_query(body: UIQueryRequest):
-        client = await graylog.client(body.server_id)
-        if body.group_by is not None:
-            return await client.aggregate(
-                body.query, body.minutes, body.group_by, body.metrics, body.interval
-            )
-        return await client.search_messages(body.query, body.minutes, body.limit)
+        return await service.execute_query(body)
 
     @admin.post("/saved")
     async def execute_saved(body: UISavedQueryRequest):
@@ -259,45 +257,40 @@ def create_admin_router(
 
     @admin.get("/streams")
     async def streams(server_id: int = Query(gt=0)):
-        return await (await graylog.client(server_id)).streams()
+        return await service.streams(server_id)
 
     @admin.get("/servers")
     async def list_servers():
-        return {"items": await audit.list_servers()}
+        return {"items": await service.list_servers()}
 
     @admin.post("/servers", status_code=201)
     async def add_server(body: GraylogServerCreate):
-        return await audit.add_server(**body.model_dump())
+        return await service.add_server(**body.model_dump())
 
     @admin.put("/servers")
     async def update_server(body: GraylogServerUpdate):
         data = body.model_dump()
         server_id = data.pop("server_id")
-        result = await audit.update_server(server_id, **data)
-        await graylog.invalidate(server_id)
-        return result
+        return await service.update_server(server_id, **data)
 
     @admin.delete("/servers")
     async def delete_server(server_id: int = Query(alias="id", gt=0)):
-        await audit.remove_server(server_id)
-        await graylog.invalidate(server_id)
+        await service.delete_server(server_id)
         return {"deleted": True}
 
     @admin.post("/servers/test")
     async def test_server(body: GraylogServerTest):
-        temporary = None
         server: dict = {}
         try:
             data = body.model_dump(exclude_none=True)
-            stored = await audit.get_server(data["server_id"]) if data.get("server_id") else None
+            stored = await service.get_server(data["server_id"]) if data.get("server_id") else None
             server = dict(stored or {})
             for field in ("url", "api_token", "verify_tls", "timeout_seconds"):
                 if field in data:
                     server[field] = data[field]
             if not server.get("url") or not server.get("api_token"):
                 raise HTTPException(status_code=400, detail="Enter a URL and Graylog API token.")
-            temporary = GraylogClient(settings, audit, server=server)
-            result = await temporary.request("GET", "/api/cluster")
+            result = await service.test_server(server)
             return {
                 "success": True,
                 "message": "The Graylog API connection is working.",
@@ -312,30 +305,26 @@ def create_admin_router(
                 {"success": False, "message": _connection_error_message(exc, endpoint)},
                 status_code=502,
             )
-        finally:
-            if temporary:
-                await temporary.close()
-
     @admin.get("/agents")
     async def list_agents():
-        return {"items": await audit.list_agents()}
+        return {"items": await service.list_agents()}
 
     @admin.post("/agents", status_code=201)
     async def add_agent(body: AgentCreate):
         data = body.model_dump()
         data["server_id"] = data.pop("graylog_server_id")
-        return await audit.add_agent(**data)
+        return await service.add_agent(**data)
 
     @admin.put("/agents")
     async def update_agent(body: AgentUpdate):
         data = body.model_dump()
         agent_id = data.pop("agent_id")
         data["server_id"] = data.pop("graylog_server_id")
-        return await audit.update_agent(agent_id, **data)
+        return await service.update_agent(agent_id, **data)
 
     @admin.delete("/agents")
     async def delete_agent(agent_id: int = Query(alias="id", gt=0)):
-        await audit.remove_agent(agent_id)
+        await service.delete_agent(agent_id)
         return {"deleted": True}
 
     @admin.get("/audit")
@@ -345,9 +334,9 @@ def create_admin_router(
         limit: int = Query(25, ge=1, le=500),
         page: int = Query(1, ge=1),
     ):
-        total = await audit.count_recent(q, source)
+        total = await service.audit_count(q, source)
         return {
-            "items": await audit.recent(limit, q, source, (page - 1) * limit),
+            "items": await service.audit(limit, q, source, (page - 1) * limit),
             "total": total,
             "page": page,
             "page_size": limit,

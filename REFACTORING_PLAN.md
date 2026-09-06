@@ -124,6 +124,8 @@ graylog_mcp/
 
 ## Step 3 — P2: extensibility and domain boundaries
 
+**Status: implemented and covered by unit and API regression tests.**
+
 Goal: make new Graylog operations, authentication backends, and storage implementations additive instead of requiring edits throughout the application.
 
 ### Changes

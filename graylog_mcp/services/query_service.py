@@ -3,18 +3,22 @@ from __future__ import annotations
 import string
 from typing import Any
 
-from ..audit import AuditStore
+from ..persistence.protocols import QueryRepository
+from ..domain.models import QueryDefinition
 from ..settings import Settings
 from .graylog_service import GraylogService
+from .query_executors import QueryExecutorRegistry
 
 
 class QueryService:
     """Renders and executes saved query definitions for every adapter."""
 
-    def __init__(self, settings: Settings, audit: AuditStore, graylog: GraylogService):
+    def __init__(self, settings: Settings, audit: QueryRepository, graylog: Any,
+                 executors: QueryExecutorRegistry | None = None):
         self.settings = settings
         self.audit = audit
         self.graylog = graylog
+        self.executors = executors or QueryExecutorRegistry()
 
     def _render_value(self, value: Any, parameters: dict[str, Any]):
         if isinstance(value, str):
@@ -43,27 +47,32 @@ class QueryService:
             for item in await self.audit.list_queries()
         ]
 
+    async def definitions(self):
+        return await self.audit.list_queries()
+
+    async def save_definition(self, definition: QueryDefinition | dict[str, Any]):
+        if hasattr(definition, "model_dump"):
+            definition = definition.model_dump()
+        if not isinstance(definition, QueryDefinition):
+            definition = QueryDefinition.model_validate(definition)
+        return await self.audit.save_query(definition.name, definition.to_storage())
+
+    async def delete_definition(self, name: str):
+        return await self.audit.remove_query(name)
+
+    async def audit_recent(self, *args, **kwargs):
+        return await self.audit.recent(*args, **kwargs)
+
+    async def audit_count(self, *args, **kwargs):
+        return await self.audit.count_recent(*args, **kwargs)
+
     async def execute_saved(
         self, name: str, parameters: dict[str, Any], server_id: int | None = None
     ):
-        query = await self.render(name, parameters)
+        query = QueryDefinition.from_storage(name, await self.render(name, parameters))
         client = await self.graylog.client(server_id)
-        if query.get("type", "messages") == "aggregate":
-            return await client.aggregate(
-                query["query"],
-                query.get("minutes", 60),
-                query.get("group_by"),
-                query.get("metrics"),
-                query.get("interval"),
-                name,
-            )
-        return await client.search_messages(
-            query["query"],
-            query.get("minutes", 15),
-            query.get("limit") or self.settings.graylog_default_limit,
-            query.get("fields"),
-            name,
-        )
+        executor = self.executors.get(query.type)
+        return await executor.execute(query, client, self.settings, name)
 
     async def execute_tool(self, name: str, args: dict[str, Any]):
         client = await self.graylog.client()
@@ -71,6 +80,8 @@ class QueryService:
             return await client.search_messages(**args)
         if name == "aggregate":
             return await client.aggregate(**args)
+        if name == "list_streams":
+            return await client.streams()
         if name == "list_saved_queries":
             return {"queries": await self.summaries()}
         if name == "run_saved_query":

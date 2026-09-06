@@ -22,12 +22,15 @@ class AuditStore:
     """Small, local and bounded audit store for requests and responses."""
 
     def __init__(self, path: Path, retention_days: int, max_rows: int, max_payload_chars: int,
-                 *, secret_encryption_key: str | None = None, redact_fields: set[str] | None = None):
+                 *, secret_encryption_key: str | None = None, redact_fields: set[str] | None = None,
+                 secret_provider: Any | None = None):
         self.path = path
         self.retention_days = max(1, retention_days)
         self.max_rows = max(100, max_rows)
         self.max_payload_chars = max(1000, max_payload_chars)
-        self.secret_cipher = SecretCipher(secret_encryption_key)
+        # A SecretProvider can be backed by KMS/Vault; SecretCipher remains the
+        # default for local deployments and preserves the existing behavior.
+        self.secret_cipher = secret_provider or SecretCipher(secret_encryption_key)
         self.redact_fields = {field.lower() for field in (redact_fields or {
             "authorization", "api_key", "api_token", "password", "secret", "token",
         })}
