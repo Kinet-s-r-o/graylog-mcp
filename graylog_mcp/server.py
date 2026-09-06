@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .app import TOOL_SCHEMAS, create_app
+from .app import create_app
 
 api = create_app()
 _runtime = api.state.runtime

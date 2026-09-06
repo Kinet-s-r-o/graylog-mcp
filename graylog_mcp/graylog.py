@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 
 from .config import Settings
-from .audit import AuditStore, stopwatch
+from .audit import stopwatch
 from .security import agent_context
 
 
@@ -13,9 +13,10 @@ class GraylogError(RuntimeError):
 
 
 class GraylogClient:
-    def __init__(self, settings: Settings, audit: AuditStore | None = None, *, server: dict | None = None):
+    def __init__(self, settings: Settings, audit: Any | None = None, *, server: dict | None = None, metrics=None):
         self.settings = settings
         self.audit = audit
+        self.metrics = metrics
         server = server or {}
         self.client = httpx.AsyncClient(
             base_url=(server.get("url") or settings.normalized_graylog_url or "http://invalid-graylog"),
@@ -40,6 +41,9 @@ class GraylogClient:
             if response.is_error:
                 raise GraylogError(f"Graylog API returned HTTP {response.status_code} for {path}")
             result = response.json() if response.content else {}
+            if self.metrics:
+                self.metrics.inc("graylog_mcp_graylog_requests_total")
+                self.metrics.inc("graylog_mcp_graylog_latency_ms_total", int((stopwatch()-started)*1000))
             if self.audit:
                 audit_request = {"params": params, "json": json}
                 if query_rule:
@@ -47,6 +51,8 @@ class GraylogClient:
                 await self.audit.record(source="graylog", operation=f"{method} {path}", request=audit_request, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id, client_ip=client_ip)
             return result
         except Exception as exc:
+            if self.metrics:
+                self.metrics.inc("graylog_mcp_graylog_errors_total")
             if self.audit:
                 audit_request = {"params": params, "json": json}
                 if query_rule:

@@ -8,12 +8,12 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from mcp.server.fastmcp import FastMCP
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.staticfiles import StaticFiles
 
 from .api.admin_routes import WEBUI_DIR, WebUIAssets, create_admin_router
@@ -30,6 +30,7 @@ from .services.adapters import GraylogOperations, MCPToolAdapter, RESTToolAdapte
 from .services.admin_service import AdminService
 from .settings import Settings
 from .api.versioning import API_VERSION_HEADER, API_VERSION
+from .observability import MetricsRegistry
 
 log = logging.getLogger(__name__)
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -121,6 +122,7 @@ def create_app(
 ) -> FastAPI:
     settings = configuration or Settings()
     logging.basicConfig(level=settings.log_level)
+    metrics = MetricsRegistry()
     audit = repository or AuditStore(
         settings.audit_db_path,
         settings.audit_retention_days,
@@ -133,12 +135,13 @@ def create_app(
         ),
         redact_fields=settings.audit_redacted_field_names,
         secret_provider=secret_provider,
+        metrics=metrics,
     )
     catalog = QueryCatalog(settings.query_catalog_path)
     trusted_proxies = parse_networks(settings.trusted_proxy_networks)
     admin_auth = create_admin_auth(settings, trusted_proxies, sessions=session_store)
     agent_auth = AgentAuth(audit, trusted_proxies)
-    graylog = GraylogService(settings, audit)
+    graylog = GraylogService(settings, audit, metrics=metrics)
     queries = QueryService(settings, audit, graylog)
     operations = GraylogOperations(graylog, queries)
     mcp_adapter = MCPToolAdapter(operations)
@@ -333,6 +336,9 @@ def create_app(
                     response = await call_next(request)
             else:
                 response = await call_next(request)
+            metrics.inc("graylog_mcp_http_requests_total")
+            if response.status_code in {401, 403}:
+                metrics.inc("graylog_mcp_auth_failures_total")
         finally:
             if audit_mcp_request:
                 # FastMCP is mounted below this middleware, so the protocol
@@ -361,7 +367,7 @@ def create_app(
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         response.headers.setdefault(
-        "Content-Security-Policy",
+            "Content-Security-Policy",
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; style-src 'self'; script-src 'self'",
         )
         if path.startswith("/api/v1") or path.startswith(settings.mcp_path):
@@ -385,6 +391,21 @@ def create_app(
     @app.get("/health", tags=["System"])
     async def health():
         return {"status": "ok", "service": "custom-graylog-mcp"}
+
+    @app.get("/ready", tags=["System"])
+    async def readiness():
+        if not getattr(audit, "db", None):
+            return JSONResponse(
+                {"status": "not_ready", "reason": "database_not_open"}, status_code=503
+            )
+        return {"status": "ready", "service": "custom-graylog-mcp"}
+
+    @app.get("/metrics", tags=["System"])
+    async def metrics_endpoint():
+        return Response(
+            metrics.render(active_sessions=len(admin_auth.sessions)),
+            media_type="text/plain; version=0.0.4",
+        )
 
     app.include_router(
         create_agent_router(settings, graylog, queries, agent_auth, RESTToolAdapter(operations))

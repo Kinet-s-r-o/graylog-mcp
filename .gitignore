@@ -4,3 +4,9 @@ __pycache__/
 *.py[cod]
 data/*
 !data/.gitkeep
+.venv/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

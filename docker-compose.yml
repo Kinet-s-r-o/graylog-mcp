@@ -4,6 +4,7 @@ services:
     image: graylog-custom-mcp:local
     pull_policy: build
     restart: unless-stopped
+    stop_grace_period: 30s
     env_file:
       - path: .env
         required: false
@@ -12,8 +13,20 @@ services:
     volumes:
       - ./queries.yaml:/app/queries.yaml:ro
       - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
     healthcheck:
-      test: ["CMD", "python", "-c", "import os,urllib.request; [urllib.request.urlopen('http://127.0.0.1:' + os.environ.get(name, default) + '/health') for name,default in [('MCP_PORT','8000'),('WEBUI_PORT','8001')]]"]
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import os,urllib.request; [urllib.request.urlopen('http://127.0.0.1:' + os.environ.get(name, default) + '/ready') for name,default in [('MCP_PORT','8000'),('WEBUI_PORT','8001')]]"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -21,6 +34,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    stop_grace_period: 15s
     depends_on:
       graylog-mcp:
         condition: service_healthy

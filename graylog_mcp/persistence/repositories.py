@@ -23,7 +23,7 @@ class AuditStore:
 
     def __init__(self, path: Path, retention_days: int, max_rows: int, max_payload_chars: int,
                  *, secret_encryption_key: str | None = None, redact_fields: set[str] | None = None,
-                 secret_provider: Any | None = None):
+                 secret_provider: Any | None = None, metrics: Any | None = None):
         self.path = path
         self.retention_days = max(1, retention_days)
         self.max_rows = max(100, max_rows)
@@ -31,6 +31,7 @@ class AuditStore:
         # A SecretProvider can be backed by KMS/Vault; SecretCipher remains the
         # default for local deployments and preserves the existing behavior.
         self.secret_cipher = secret_provider or SecretCipher(secret_encryption_key)
+        self.metrics = metrics
         self.redact_fields = {field.lower() for field in (redact_fields or {
             "authorization", "api_key", "api_token", "password", "secret", "token",
         })}
@@ -75,7 +76,7 @@ class AuditStore:
             spelling = re.escape(field).replace("_", "[-_]")
             value = re.sub(
                 rf"(?i)(\b{spelling}\b\s*[:=]\s*)([^\s,;]+)",
-                rf"\1[REDACTED]",
+                r"\1[REDACTED]",
                 value,
             )
         return value
@@ -106,14 +107,23 @@ class AuditStore:
             await self.db.commit()
             await self.cleanup()
         except Exception:
+            if self.metrics:
+                self.metrics.inc("graylog_mcp_database_failures_total")
             log.exception("Could not write audit record")
 
     async def cleanup(self):
         if not self.db:
             return
-        await self.db.execute("DELETE FROM audit_log WHERE datetime(created_at) < datetime('now', ?)", (f"-{self.retention_days} days",))
-        await self.db.execute("DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)", (self.max_rows,))
-        await self.db.commit()
+        try:
+            await self.db.execute("DELETE FROM audit_log WHERE datetime(created_at) < datetime('now', ?)", (f"-{self.retention_days} days",))
+            await self.db.execute("DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)", (self.max_rows,))
+            await self.db.commit()
+            if self.metrics:
+                self.metrics.inc("graylog_mcp_audit_cleanup_total")
+        except Exception:
+            if self.metrics:
+                self.metrics.inc("graylog_mcp_database_failures_total")
+            raise
 
     async def recent(self, limit: int = 100, search: str | None = None, source: str | None = None,
                      offset: int = 0, agent_id: int | None = None):

@@ -98,6 +98,15 @@ implementations only need to follow the protocols in
 `graylog_mcp/persistence/protocols.py`; route and authentication code does not
 need to be changed.
 
+Operational procedures for health/readiness, backup, migrations, rollback,
+proxy trust and security are documented in [OPERATIONS.md](OPERATIONS.md).
+
+The project quality gate is reproducible with `uv sync --locked --group dev`;
+CI runs tests with a 70% coverage threshold, Ruff, mypy, pip-audit, Gitleaks,
+Compose validation, and a container build. Runtime probes are `/health` for
+process liveness, `/ready` for database readiness, and `/metrics` for the
+Prometheus-compatible operational counters.
+
 ## Poznámky
 
 Server používa Graylog Search Scripting API endpointy `/api/search/messages` a `/api/search/aggregate`. Graylog autentifikácia používa API token v Basic Auth formáte `TOKEN:token`; nastavuje sa cez `GRAYLOG_API_TOKEN`. Agregačné `group_by` položky používajú Graylog formát, napr. `{field: service}`; časové buckety možno pridať cez `interval`. Pri staršej alebo výrazne customizovanej verzii Graylogu sa endpointy dajú zmeniť v `graylog_mcp/graylog.py`. Do produkcie odporúčam HTTPS/reverse proxy pred MCP endpointom a Graylog používateľa s minimálnymi potrebnými právami.

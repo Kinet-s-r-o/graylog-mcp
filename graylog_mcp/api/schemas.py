@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from ..domain.validation import (
-    INTERVAL_PATTERN, METRIC_FUNCTIONS, NAME_PATTERN, clean_name,
+    INTERVAL_PATTERN, clean_name,
     validate_fields, validate_groupings, validate_metrics,
 )
 

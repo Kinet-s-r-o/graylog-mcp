@@ -8,7 +8,6 @@ from ..services.query_service import QueryService
 from ..services.adapters import GraylogOperations, RESTToolAdapter
 from ..settings import Settings
 from .schemas import AggregateRequest, SavedQueryRequest, SearchRequest
-from .versioning import version_headers
 
 
 def create_agent_router(

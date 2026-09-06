@@ -13,7 +13,7 @@ from .validation import (
 )
 
 
-QUERY_SCHEMA_VERSION = 1
+QUERY_SCHEMA_VERSION: Literal[1] = 1
 
 
 class QueryDefinition(BaseModel):
@@ -47,6 +47,7 @@ class QueryDefinition(BaseModel):
     def validate_interval(cls, value: str | None) -> str | None:
         if value in (None, ""):
             return None
+        assert value is not None
         if not INTERVAL_PATTERN.fullmatch(value):
             raise ValueError("Interval must use a compact value such as 30s, 5m, or 1h")
         return value

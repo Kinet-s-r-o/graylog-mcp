@@ -12,12 +12,22 @@ dependencies = [
   "fastapi>=0.115.0,<1",
   "uvicorn[standard]>=0.30.0,<1",
   "pydantic-settings>=2.7.0,<3",
-  "cryptography>=44.0.0,<46"
+  "cryptography>=46.0.7,<51"
 ]
 
 [project.optional-dependencies]
 test = [
-  "pytest>=8.3.0,<9"
+  "pytest>=9.0.3,<10",
+  "pytest-cov>=6.0.0,<7"
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0.3,<10",
+  "pytest-cov>=6.0.0,<7",
+  "ruff>=0.9.0,<1",
+  "mypy>=1.14.0,<2",
+  "pip-audit>=2.7.0,<3",
 ]
 
 [project.scripts]
@@ -31,3 +41,39 @@ graylog_mcp = ["webui/*.html", "webui/*.css", "webui/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = ["E4", "E9", "F"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["graylog_mcp"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+  "graylog_mcp.app",
+  "graylog_mcp.api.schemas",
+  "graylog_mcp.catalog",
+  "graylog_mcp.graylog",
+  "graylog_mcp.openai_agent",
+  "graylog_mcp.persistence.migrations",
+  "graylog_mcp.persistence.repositories",
+]
+ignore_errors = true
+
+[tool.coverage.run]
+branch = true
+source = ["graylog_mcp"]
+
+[tool.coverage.report]
+fail_under = 70
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]

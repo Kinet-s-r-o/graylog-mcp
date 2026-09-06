@@ -12,10 +12,10 @@ from ..settings import Settings
 class GraylogService:
     """Registry and use cases for configured Graylog connections."""
 
-    def __init__(self, settings: Settings, audit: GraylogRepository):
+    def __init__(self, settings: Settings, audit: GraylogRepository, metrics=None):
         self.settings = settings
         self.audit = audit
-        self.registry = GraylogClientRegistry(settings, audit)
+        self.registry = GraylogClientRegistry(settings, audit, metrics=metrics)
 
     @property
     def clients(self) -> dict[int, GraylogClient]:
@@ -39,9 +39,10 @@ class GraylogService:
 class GraylogClientRegistry:
     """Owns cached clients and replaces them when connection configuration changes."""
 
-    def __init__(self, settings: Settings, repository: GraylogRepository):
+    def __init__(self, settings: Settings, repository: GraylogRepository, metrics=None):
         self.settings = settings
         self.repository = repository
+        self.metrics = metrics
         self.clients: dict[int, GraylogClient] = {}
         self._fingerprints: dict[int, tuple[Any, ...]] = {}
 
@@ -62,7 +63,9 @@ class GraylogClientRegistry:
         if server_id in self.clients and self._fingerprints.get(server_id) == fingerprint:
             return self.clients[server_id]
         await self.invalidate(server_id)
-        self.clients[server_id] = GraylogClient(self.settings, self.repository, server=server)
+        self.clients[server_id] = GraylogClient(
+            self.settings, self.repository, server=server, metrics=self.metrics
+        )
         self._fingerprints[server_id] = fingerprint
         return self.clients[server_id]
 

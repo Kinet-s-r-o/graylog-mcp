@@ -6,7 +6,6 @@ from typing import Any
 from ..persistence.protocols import QueryRepository
 from ..domain.models import QueryDefinition
 from ..settings import Settings
-from .graylog_service import GraylogService
 from .query_executors import QueryExecutorRegistry
 
 
