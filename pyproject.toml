@@ -18,13 +18,13 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest>=9.0.3,<10",
-  "pytest-cov>=6.0.0,<7"
+  "pytest-cov>=6.0.0,<8"
 ]
 
 [dependency-groups]
 dev = [
   "pytest>=9.0.3,<10",
-  "pytest-cov>=6.0.0,<7",
+  "pytest-cov>=6.0.0,<8",
   "ruff>=0.9.0,<1",
   "mypy>=1.14.0,<2",
   "pip-audit>=2.7.0,<3",
