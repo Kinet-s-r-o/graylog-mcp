@@ -20,4 +20,4 @@ USER app
 
 EXPOSE 8000 8001
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
-CMD ["/app/.venv/bin/graylog-mcp"]
+CMD ["/app/.venv/bin/python", "-m", "graylog_mcp.server"]

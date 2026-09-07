@@ -10,10 +10,17 @@ trusted listener or restrict it at the reverse proxy.
 
 ## Backup and migration
 
-Stop writes or use SQLite's online backup command before copying the database:
+Stop writes or use SQLite's online backup command before copying the database.
+The default Compose deployment stores SQLite in the Docker named volume
+`graylog_data`; this avoids WAL corruption on synchronised folders such as
+OneDrive. Back up that volume rather than placing SQLite directly in a synced
+working tree:
 
 ```sh
-sqlite3 ./data/audit.db ".backup './data/audit.db.backup-$(date +%Y%m%d-%H%M%S)'"
+docker run --rm \
+  -v graylog-mcp_graylog_data:/data \
+  -v "$PWD/backups:/backup" \
+  alpine:3.22 sh -c 'tar czf /backup/graylog-data-$(date +%Y%m%d-%H%M%S).tgz -C /data .'
 ```
 
 The application applies additive migrations during startup and records applied

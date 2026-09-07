@@ -12,7 +12,9 @@ services:
     # Its ports are intentionally not published on the host.
     volumes:
       - ./queries.yaml:/app/queries.yaml:ro
-      - ./data:/data
+      # Keep SQLite off synchronised folders such as OneDrive; WAL on those
+      # filesystems can fail with "disk I/O error" during container startup.
+      - graylog_data:/data
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
@@ -63,3 +65,6 @@ services:
       - ./caddy/data:/data
       - ./caddy/config:/config
       - ${CADDY_CERTS_DIR:-./caddy/certs}:/etc/caddy/certs:ro
+
+volumes:
+  graylog_data:

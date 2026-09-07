@@ -100,6 +100,9 @@ need to be changed.
 
 Operational procedures for health/readiness, backup, migrations, rollback,
 proxy trust and security are documented in [OPERATIONS.md](OPERATIONS.md).
+SQLite is stored in the Docker named volume `graylog_data`; this is intentional
+for deployments whose source tree is on OneDrive or another synchronised
+filesystem.
 
 The project quality gate is reproducible with `uv sync --locked --group dev`;
 CI runs tests with a 70% coverage threshold, Ruff, mypy, pip-audit, Gitleaks,
