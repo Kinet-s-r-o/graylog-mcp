@@ -1,0 +1,3 @@
+[allowlist]
+description = "Documented placeholder used in example curl commands"
+regexes = ['AGENT_API_KEY']
