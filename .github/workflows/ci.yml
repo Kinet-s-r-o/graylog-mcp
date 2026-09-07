@@ -10,6 +10,8 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
