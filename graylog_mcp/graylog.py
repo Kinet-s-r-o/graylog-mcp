@@ -161,8 +161,9 @@ class GraylogClient:
                 response = await self.client.request(method, path, params=params, json=json)
                 if response.is_error:
                     retryable = response.status_code == 429 or response.status_code >= 500
+                    detail = response.text.strip().replace("\n", " ")[:500]
                     raise GraylogError(
-                        f"Graylog API returned HTTP {response.status_code} for {path}",
+                        f"Graylog API returned HTTP {response.status_code} for {path}: {detail}",
                         code="graylog_http_error", retryable=retryable, status_code=response.status_code,
                     )
                 result = response.json() if response.content else {}
@@ -228,8 +229,18 @@ class GraylogClient:
     async def aggregate(self, query: str, minutes: int = 60, group_by: list[dict[str, Any]] | None = None,
                         metrics: list[dict[str, Any]] | None = None, interval: str | None = None,
                         query_rule: str | None = None, compact: bool = False):
+        normalized_group_by = [dict(item) for item in (group_by or [])]
+        for item in normalized_group_by:
+            if "field" not in item and item.get("type") in {"field", "time", "timestamp"} and item.get("id"):
+                item["field"] = item.pop("id")
+                item.pop("type", None)
+        normalized_metrics = [dict(item) for item in (metrics or [{"function": "count", "id": "count"}])]
+        for item in normalized_metrics:
+            if "function" not in item and item.get("type"):
+                item["function"] = {"avg": "average", "mean": "average"}.get(item["type"], item["type"])
+                item.pop("type", None)
         body = {"query": query, "timerange": _timerange(minutes),
-                "group_by": list(group_by or []), "metrics": list(metrics or [{"function": "count", "id": "count"}]),
+                "group_by": normalized_group_by, "metrics": normalized_metrics,
                 }
         if interval:
             body["group_by"].append({"field": "timestamp", "timeunit": interval})

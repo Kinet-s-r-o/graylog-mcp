@@ -49,6 +49,13 @@ def test_query_rule_validates_interval_grouping_and_metrics():
     with pytest.raises(ValidationError):
         QueryDefinitionInput(name="bad", query="*", metrics=[{"function": "average"}])
 
+    normalized = QueryDefinitionInput(
+        name="openwebui", query="*", group_by=[{"type": "field", "id": "severity"}],
+        metrics=[{"type": "count", "id": "count"}],
+    )
+    assert normalized.group_by == [{"field": "severity"}]
+    assert normalized.metrics == [{"function": "count", "id": "count"}]
+
 
 def test_query_rule_allows_empty_limit_for_aggregations():
     rule = QueryDefinitionInput(name="total", type="aggregate", query="*", limit=None)

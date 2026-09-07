@@ -20,6 +20,12 @@ def clean_name(value: str) -> str:
 
 def validate_groupings(value: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for item in value:
+        if "field" not in item and item.get("type") == "field" and isinstance(item.get("id"), str):
+            item["field"] = item.pop("id")
+            item.pop("type", None)
+        elif "field" not in item and item.get("type") in {"time", "timestamp"} and isinstance(item.get("id"), str):
+            item["field"] = item.pop("id")
+            item.pop("type", None)
         field = item.get("field")
         if not isinstance(field, str) or not field.strip() or len(field) > 255 or not NAME_PATTERN.fullmatch(field):
             raise ValueError("Every grouping must contain a valid field")
@@ -30,6 +36,10 @@ def validate_metrics(value: list[dict[str, Any]] | None) -> list[dict[str, Any]]
     if value is None:
         return value
     for item in value:
+        if "function" not in item and isinstance(item.get("type"), str):
+            aliases = {"avg": "average", "mean": "average", "count": "count"}
+            item["function"] = aliases.get(item["type"], item["type"])
+            item.pop("type", None)
         function = item.get("function")
         if function not in METRIC_FUNCTIONS:
             raise ValueError(f"Unsupported metric function: {function}")
