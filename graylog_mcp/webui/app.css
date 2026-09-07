@@ -129,6 +129,29 @@ button.secondary {
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
+fieldset {
+  border: 1px solid #d9e0e7;
+  border-radius: 6px;
+  margin: 1rem 0 0;
+  padding: 0.65rem 0.9rem 0.8rem;
+}
+fieldset legend {
+  font-weight: 700;
+  padding: 0 0.35rem;
+}
+.tool-permissions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.2rem 1rem;
+}
+.tool-permissions label {
+  font-weight: 500;
+  margin: 0.25rem 0;
+}
+.tool-permissions input {
+  width: auto;
+  margin-right: 0.35rem;
+}
 @media (max-width: 700px) {
   .grid {
     grid-template-columns: 1fr;

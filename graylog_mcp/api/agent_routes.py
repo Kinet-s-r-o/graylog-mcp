@@ -57,10 +57,12 @@ def create_agent_router(
 
     @router.get("/queries", tags=["Saved queries"])
     async def saved_queries(_agent=Depends(auth.require)):
+        queries.require_tool_access("list_saved_queries")
         return {"queries": await queries.summaries()}
 
     @router.post("/queries/run", tags=["Saved queries"])
     async def run_saved_query(body: SavedQueryRequest, _agent=Depends(auth.require)):
+        queries.require_tool_access("run_saved_query")
         try:
             return await queries.execute_saved(body.name, body.parameters)
         except KeyError as exc:

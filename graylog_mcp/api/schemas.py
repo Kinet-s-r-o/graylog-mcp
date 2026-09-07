@@ -162,6 +162,7 @@ class AgentCreate(StrictRequest):
     graylog_server_id: int = Field(gt=0)
     api_key: str | None = Field(None, min_length=24, max_length=4096)
     allowed_ips: str | list[str] | None = None
+    allowed_tools: list[str] | None = None
 
     _name = field_validator("name")(_clean_name)
 
@@ -180,6 +181,14 @@ class AgentCreate(StrictRequest):
         ):
             raise ValueError("Allowed IP list may contain at most 512 CIDR entries")
         return value
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def validate_allowed_tools(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(value) > 32:
+            raise ValueError("Too many allowed tools")
+        from ..tool_access import normalize_allowed_tools
+        return normalize_allowed_tools(value) if value is not None else None
 
 
 class AgentUpdate(AgentCreate):

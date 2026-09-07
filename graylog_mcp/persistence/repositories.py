@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..security import SecretCipher
+from ..tool_access import normalize_allowed_tools
 from .database import Database
 from .migrations import run_migrations
 
@@ -247,48 +248,60 @@ class AuditStore:
         try: return json.loads(raw or "[]")
         except (TypeError, json.JSONDecodeError): return []
 
+    @staticmethod
+    def decode_allowed_tools(raw: str | None) -> list[str]:
+        if raw is None:
+            return normalize_allowed_tools(None)
+        try:
+            return normalize_allowed_tools(json.loads(raw))
+        except (TypeError, json.JSONDecodeError, ValueError):
+            return normalize_allowed_tools(None)
+
     async def list_agents(self):
-        cursor = await self.db.execute("""SELECT a.id,a.name,a.api_key_last4,a.graylog_server_id,a.active,a.created_at,a.allowed_ips,s.name
+        cursor = await self.db.execute("""SELECT a.id,a.name,a.api_key_last4,a.graylog_server_id,a.active,a.created_at,a.allowed_ips,a.allowed_tools,s.name
             FROM agents a JOIN graylog_servers s ON s.id=a.graylog_server_id ORDER BY a.name""")
         rows = await cursor.fetchall()
-        cols = ["id","name","api_key_last4","graylog_server_id","active","created_at","allowed_ips","graylog_server_name"]
+        cols = ["id","name","api_key_last4","graylog_server_id","active","created_at","allowed_ips","allowed_tools","graylog_server_name"]
         result = []
         for row in rows:
-            item = dict(zip(cols, row)); item["allowed_ips"] = self.decode_allowed_ips(item["allowed_ips"]); result.append(item)
+            item = dict(zip(cols, row)); item["allowed_ips"] = self.decode_allowed_ips(item["allowed_ips"]); item["allowed_tools"] = self.decode_allowed_tools(item["allowed_tools"]); result.append(item)
         return result
 
-    async def add_agent(self, name: str, server_id: int, api_key: str | None = None, allowed_ips: str | list[str] | None = None):
+    async def add_agent(self, name: str, server_id: int, api_key: str | None = None, allowed_ips: str | list[str] | None = None, allowed_tools: list[str] | None = None):
         api_key = api_key or "glmc_" + secrets.token_urlsafe(32)
         if len(api_key) < 24:
             raise ValueError("MCP API key must contain at least 24 characters")
         normalized_ips = self.normalize_allowed_ips(allowed_ips)
+        normalized_tools = normalize_allowed_tools(allowed_tools)
         digest = hashlib.sha256(api_key.encode()).hexdigest()
-        await self.db.execute("INSERT INTO agents(name,api_key_hash,api_key_last4,graylog_server_id,created_at,allowed_ips) VALUES(?,?,?,?,?,?)",
-                              (name, digest, api_key[-4:], server_id, datetime.now(timezone.utc).isoformat(), json.dumps(normalized_ips)))
+        await self.db.execute("INSERT INTO agents(name,api_key_hash,api_key_last4,graylog_server_id,created_at,allowed_ips,allowed_tools) VALUES(?,?,?,?,?,?,?)",
+                              (name, digest, api_key[-4:], server_id, datetime.now(timezone.utc).isoformat(), json.dumps(normalized_ips), json.dumps(normalized_tools)))
         await self.db.commit()
-        return {"api_key": api_key, "name": name, "graylog_server_id": server_id, "allowed_ips": normalized_ips}
+        return {"api_key": api_key, "name": name, "graylog_server_id": server_id, "allowed_ips": normalized_ips, "allowed_tools": normalized_tools}
 
     async def remove_agent(self, agent_id: int):
         await self.db.execute("DELETE FROM agents WHERE id=?", (agent_id,)); await self.db.commit()
 
     async def update_agent(self, agent_id: int, name: str, server_id: int, active: bool = True,
-                           api_key: str | None = None, allowed_ips: str | list[str] | None = None):
+                           api_key: str | None = None, allowed_ips: str | list[str] | None = None,
+                           allowed_tools: list[str] | None = None):
         cursor = await self.db.execute("SELECT id FROM agents WHERE id=?", (agent_id,))
         if not await cursor.fetchone():
             raise ValueError("MCP client not found")
         normalized_ips = self.normalize_allowed_ips(allowed_ips) if allowed_ips is not None else None
+        normalized_tools = normalize_allowed_tools(allowed_tools) if allowed_tools is not None else None
         if api_key:
             if len(api_key) < 24:
                 raise ValueError("MCP API key must contain at least 24 characters")
             digest = hashlib.sha256(api_key.encode()).hexdigest()
             await self.db.execute(
-                "UPDATE agents SET name=?,api_key_hash=?,api_key_last4=?,graylog_server_id=?,active=?,allowed_ips=COALESCE(?,allowed_ips) WHERE id=?",
-                (name, digest, api_key[-4:], server_id, int(active), json.dumps(normalized_ips) if normalized_ips is not None else None, agent_id),
+                "UPDATE agents SET name=?,api_key_hash=?,api_key_last4=?,graylog_server_id=?,active=?,allowed_ips=COALESCE(?,allowed_ips),allowed_tools=COALESCE(?,allowed_tools) WHERE id=?",
+                (name, digest, api_key[-4:], server_id, int(active), json.dumps(normalized_ips) if normalized_ips is not None else None, json.dumps(normalized_tools) if normalized_tools is not None else None, agent_id),
             )
         else:
             await self.db.execute(
-                "UPDATE agents SET name=?,graylog_server_id=?,active=?,allowed_ips=COALESCE(?,allowed_ips) WHERE id=?",
-                (name, server_id, int(active), json.dumps(normalized_ips) if normalized_ips is not None else None, agent_id),
+                "UPDATE agents SET name=?,graylog_server_id=?,active=?,allowed_ips=COALESCE(?,allowed_ips),allowed_tools=COALESCE(?,allowed_tools) WHERE id=?",
+                (name, server_id, int(active), json.dumps(normalized_ips) if normalized_ips is not None else None, json.dumps(normalized_tools) if normalized_tools is not None else None, agent_id),
             )
         await self.db.commit()
         items = await self.list_agents()
@@ -299,14 +312,15 @@ class AuditStore:
 
     async def authenticate_agent(self, api_key: str):
         digest = hashlib.sha256(api_key.encode()).hexdigest()
-        cursor = await self.db.execute("""SELECT a.id,a.name,a.graylog_server_id,s.name,s.url,s.api_token,s.verify_tls,s.timeout_seconds,a.allowed_ips
+        cursor = await self.db.execute("""SELECT a.id,a.name,a.graylog_server_id,s.name,s.url,s.api_token,s.verify_tls,s.timeout_seconds,a.allowed_ips,a.allowed_tools
             FROM agents a JOIN graylog_servers s ON s.id=a.graylog_server_id
             WHERE a.api_key_hash=? AND a.active=1""", (digest,))
         row = await cursor.fetchone()
         if not row: return None
-        result = dict(zip(["agent_id","agent_name","graylog_server_id","server_name","url","api_token","verify_tls","timeout_seconds","allowed_ips"], row))
+        result = dict(zip(["agent_id","agent_name","graylog_server_id","server_name","url","api_token","verify_tls","timeout_seconds","allowed_ips","allowed_tools"], row))
         result["api_token"] = self.secret_cipher.decrypt(result["api_token"])
         result["allowed_ips"] = self.decode_allowed_ips(result["allowed_ips"])
+        result["allowed_tools"] = self.decode_allowed_tools(result["allowed_tools"])
         return result
 
     async def get_server(self, server_id: int):

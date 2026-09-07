@@ -16,6 +16,13 @@ def test_agent_rejects_weak_user_supplied_key():
         AgentCreate(name="agent", graylog_server_id=1, api_key="too-short")
 
 
+def test_agent_validates_allowed_tools():
+    agent = AgentCreate(name="agent", graylog_server_id=1, allowed_tools=["aggregate", "aggregate", "search_messages"])
+    assert agent.allowed_tools == ["search_messages", "aggregate"]
+    with pytest.raises(ValidationError):
+        AgentCreate(name="agent", graylog_server_id=1, allowed_tools=["not_a_tool"])
+
+
 def test_request_models_reject_unknown_or_oversized_fields():
     with pytest.raises(ValidationError):
         GraylogServerCreate(

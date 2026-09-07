@@ -3,6 +3,18 @@ import { $, escapeHtml } from "./dom.js";
 import { notify } from "./notifications.js";
 import { state } from "./state.js";
 
+const agentTools = [
+  ["search_messages", "Search messages"],
+  ["aggregate", "Aggregate"],
+  ["list_streams", "List streams"],
+  ["list_saved_queries", "List saved queries"],
+  ["run_saved_query", "Run saved query"],
+  ["search_error_patterns", "Search error patterns"],
+  ["compare_time_windows", "Compare time windows"],
+  ["get_log_context", "Get log context"],
+  ["ask_graylog", "AI orchestration (ask_graylog)"],
+];
+
 let refresh = {
   servers: async () => {},
   agents: async () => {},
@@ -152,10 +164,12 @@ export function openServer(item = null) {
 
 export function openAgent(item = null) {
   const agent = item || {};
+  const allowedTools = agent.allowed_tools || agentTools.map(([name]) => name);
+  const toolFields = `<fieldset><legend>Allowed Graylog tools</legend><div class="tool-permissions">${agentTools.map(([name, label]) => `<label><input type="checkbox" name="agent-tool" value="${name}" ${allowedTools.includes(name) ? "checked" : ""}> ${label}</label>`).join("")}</div><small class="muted">Only selected tools can be called with this client's API key. Empty selection denies all tools.</small></fieldset>`;
   open(
     "agent",
     item ? "Edit MCP client" : "Add MCP client",
-    `<div class="grid">${field("Client name", "mAgentName", agent.name, "text", "monitoring-agent", true)}<div><label for="mAgentServer">${labelMarkup("Assigned Graylog server", true)}</label><select id="mAgentServer" required aria-required="true">${options(state.servers, agent.graylog_server_id)}</select></div>${field("API key", "mAgentKey", "", "password", item ? "Leave blank to keep the current key" : "Leave blank to generate")}${item ? `<div><label for="mAgentActive">Status</label><select id="mAgentActive"><option value="true" ${agent.active ? "selected" : ""}>Active</option><option value="false" ${!agent.active ? "selected" : ""}>Inactive</option></select></div>` : ""}</div>${textarea("Allowed source IPs (CIDR)", "mAgentAllowedIps", (agent.allowed_ips || []).join("\n"))}`,
+    `<div class="grid">${field("Client name", "mAgentName", agent.name, "text", "monitoring-agent", true)}<div><label for="mAgentServer">${labelMarkup("Assigned Graylog server", true)}</label><select id="mAgentServer" required aria-required="true">${options(state.servers, agent.graylog_server_id)}</select></div>${field("API key", "mAgentKey", "", "password", item ? "Leave blank to keep the current key" : "Leave blank to generate")}${item ? `<div><label for="mAgentActive">Status</label><select id="mAgentActive"><option value="true" ${agent.active ? "selected" : ""}>Active</option><option value="false" ${!agent.active ? "selected" : ""}>Inactive</option></select></div>` : ""}</div>${textarea("Allowed source IPs (CIDR)", "mAgentAllowedIps", (agent.allowed_ips || []).join("\n"))}${toolFields}`,
     item,
   );
 }
@@ -286,6 +300,7 @@ export async function submit(event) {
         name: $("mAgentName").value.trim(),
         graylog_server_id: Number($("mAgentServer").value),
         allowed_ips: $("mAgentAllowedIps").value,
+        allowed_tools: [...document.querySelectorAll('input[name="agent-tool"]:checked')].map((input) => input.value),
       };
       if ($("mAgentKey").value) payload.api_key = $("mAgentKey").value;
       if (item) {

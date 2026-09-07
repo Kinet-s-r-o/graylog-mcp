@@ -31,6 +31,7 @@ from .services.admin_service import AdminService
 from .settings import Settings
 from .api.versioning import API_VERSION_HEADER, API_VERSION
 from .observability import MetricsRegistry
+from .tool_access import ToolAccessDenied, filter_tool_schemas, require_tool_access
 
 log = logging.getLogger(__name__)
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -103,6 +104,12 @@ def _install_error_handlers(app: FastAPI) -> None:
     async def value_error(request: Request, exc: Exception):
         return JSONResponse(
             _error_payload(request, "invalid_request", str(exc).strip("'")), status_code=400
+        )
+
+    @app.exception_handler(ToolAccessDenied)
+    async def tool_access_error(request: Request, exc: ToolAccessDenied):
+        return JSONResponse(
+            _error_payload(request, "tool_forbidden", str(exc)), status_code=403
         )
 
     @app.exception_handler(Exception)
@@ -245,9 +252,10 @@ def create_app(
     @mcp.tool()
     async def ask_graylog(question: str) -> str:
         """Answer a Graylog question using OpenAI to orchestrate Graylog tools."""
+        require_tool_access("ask_graylog")
         if not settings.openai_api_key:
             return "OpenAI is not configured. Use search_messages, aggregate or run_saved_query directly."
-        return await OpenAIAgent(settings, TOOL_SCHEMAS, audit, metrics).ask(question, execute)
+        return await OpenAIAgent(settings, filter_tool_schemas(TOOL_SCHEMAS), audit, metrics).ask(question, execute)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

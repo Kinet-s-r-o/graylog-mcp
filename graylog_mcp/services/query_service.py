@@ -7,6 +7,7 @@ from ..persistence.protocols import QueryRepository
 from ..domain.models import QueryDefinition
 from ..settings import Settings
 from .query_executors import QueryExecutorRegistry
+from ..tool_access import require_tool_access
 
 
 class QueryService:
@@ -75,6 +76,7 @@ class QueryService:
         return await executor.execute(query, client, self.settings, name, compact=compact)
 
     async def execute_tool(self, name: str, args: dict[str, Any]):
+        require_tool_access(name)
         client = await self.graylog.client()
         if name == "search_messages":
             values = {**args, "compact": True}
@@ -97,3 +99,6 @@ class QueryService:
         if name == "get_log_context":
             return await client.get_log_context(**args)
         raise ValueError(f"Unsupported tool: {name}")
+
+    def require_tool_access(self, name: str) -> None:
+        require_tool_access(name)

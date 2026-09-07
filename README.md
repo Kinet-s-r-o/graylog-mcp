@@ -51,6 +51,12 @@ MCP klient sa pripája na `/mcp` cez `Authorization: Bearer <agent-api-key>`. Ro
 
 Nový agent dostane API kľúč v odpovedi pri vytvorení. Kľúč si ulož, pretože databáza uchováva iba jeho hash a posledné štyri znaky.
 
+### Oprávnenia MCP klientov
+
+Každý MCP klient má vlastný zoznam povolených nástrojov. Nastavuje sa pri vytvorení alebo úprave klienta v sekcii `MCP Clients` cez voľby `Allowed Graylog tools`. Rovnaká kontrola platí pre natívne MCP volania, `ask_graylog` aj agentské REST API; nepovolený nástroj skončí odpoveďou HTTP 403 s kódom `tool_forbidden`. Prázdny zoznam znamená zákaz všetkých nástrojov.
+
+Existujúci klienti po migrácii databázy automaticky zachovajú doterajšie správanie a dostanú všetky aktuálne nástroje. Nový klient bez zvoleného obmedzenia má tiež všetky nástroje, takže nasadenie neporuší existujúce integrácie. Pre produkciu odporúčame vytvoriť klienta s minimálnou sadou, napríklad iba `search_messages`, `aggregate` a `get_log_context`.
+
 | Natívny port | Rozhranie | Požadované oprávnenie |
 | --- | --- | --- |
 | oba | `/health` | bez autentifikácie |

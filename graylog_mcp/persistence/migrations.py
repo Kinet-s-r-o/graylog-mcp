@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import aiosqlite
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 async def _columns(db: aiosqlite.Connection, table: str) -> set[str]:
@@ -42,11 +42,14 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
           api_key_hash TEXT NOT NULL UNIQUE, api_key_last4 TEXT NOT NULL,
           graylog_server_id INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL, allowed_ips TEXT NOT NULL DEFAULT '[]',
+          allowed_tools TEXT,
           FOREIGN KEY(graylog_server_id) REFERENCES graylog_servers(id)
         )"""
     )
     if "allowed_ips" not in await _columns(db, "agents"):
         await db.execute("ALTER TABLE agents ADD COLUMN allowed_ips TEXT NOT NULL DEFAULT '[]'")
+    if "allowed_tools" not in await _columns(db, "agents"):
+        await db.execute("ALTER TABLE agents ADD COLUMN allowed_tools TEXT")
     if "agent_id" not in await _columns(db, "audit_log"):
         await db.execute("ALTER TABLE audit_log ADD COLUMN agent_id INTEGER")
     if "client_ip" not in await _columns(db, "audit_log"):

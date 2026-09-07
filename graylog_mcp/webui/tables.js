@@ -30,10 +30,10 @@ export function renderAgents() {
   }));
   const rows = filterable.filter((item) => matchesFilters(item, "agents"));
   $("agentsOut").innerHTML =
-    `<table class="audit-table"><thead><tr>${filterHeader("Name", "agents", "name")}${filterHeader("Graylog server", "agents", "graylog_server_name")}${filterHeader("API key", "agents", "api_key_last4")}${filterHeader("Status", "agents", "status")}<th>Created</th><th>Actions</th></tr></thead><tbody>${rows
+    `<table class="audit-table"><thead><tr>${filterHeader("Name", "agents", "name")}${filterHeader("Graylog server", "agents", "graylog_server_name")}${filterHeader("API key", "agents", "api_key_last4")}${filterHeader("Status", "agents", "status")}<th>Tools</th><th>Created</th><th>Actions</th></tr></thead><tbody>${rows
       .map(
         (agent) =>
-          `<tr class="table-row" data-edit-kind="agent" data-id="${agent.id}"><td><strong>${escapeHtml(agent.name)}</strong></td><td>${escapeHtml(agent.graylog_server_name)}</td><td>••••${escapeHtml(agent.api_key_last4)}</td><td><span class="badge ${agent.active ? "active" : "inactive"}">${agent.status}</span></td><td>${escapeHtml(agent.created_at)}</td><td class="row-actions"><button class="secondary icon-button" title="Edit MCP client" aria-label="Edit MCP client" data-action="edit-agent" data-id="${agent.id}">✎</button><button class="delete-button icon-button" title="Delete MCP client" aria-label="Delete MCP client" data-action="delete-agent" data-id="${agent.id}">✕</button></td></tr>`,
+          `<tr class="table-row" data-edit-kind="agent" data-id="${agent.id}"><td><strong>${escapeHtml(agent.name)}</strong></td><td>${escapeHtml(agent.graylog_server_name)}</td><td>••••${escapeHtml(agent.api_key_last4)}</td><td><span class="badge ${agent.active ? "active" : "inactive"}">${agent.status}</span></td><td>${escapeHtml(agent.allowed_tools?.length ?? 0)}</td><td>${escapeHtml(agent.created_at)}</td><td class="row-actions"><button class="secondary icon-button" title="Edit MCP client" aria-label="Edit MCP client" data-action="edit-agent" data-id="${agent.id}">✎</button><button class="delete-button icon-button" title="Delete MCP client" aria-label="Delete MCP client" data-action="delete-agent" data-id="${agent.id}">✕</button></td></tr>`,
       )
       .join("")}</tbody></table>`;
 }

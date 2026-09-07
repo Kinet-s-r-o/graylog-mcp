@@ -14,21 +14,27 @@ class GraylogOperations:
         self.queries = queries
 
     async def search_messages(self, **args):
+        self.queries.require_tool_access("search_messages")
         return await (await self.graylog.client()).search_messages(**args)
 
     async def aggregate(self, **args):
+        self.queries.require_tool_access("aggregate")
         return await (await self.graylog.client()).aggregate(**args)
 
     async def streams(self):
+        self.queries.require_tool_access("list_streams")
         return await (await self.graylog.client()).streams()
 
     async def search_error_patterns(self, **args):
+        self.queries.require_tool_access("search_error_patterns")
         return await (await self.graylog.client()).search_error_patterns(**args)
 
     async def compare_time_windows(self, **args):
+        self.queries.require_tool_access("compare_time_windows")
         return await (await self.graylog.client()).compare_time_windows(**args)
 
     async def get_log_context(self, **args):
+        self.queries.require_tool_access("get_log_context")
         return await (await self.graylog.client()).get_log_context(**args)
 
     async def execute_tool(self, name: str, args: dict[str, Any]):
