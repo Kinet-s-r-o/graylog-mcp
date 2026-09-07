@@ -66,23 +66,34 @@ class QueryService:
         return await self.audit.count_recent(*args, **kwargs)
 
     async def execute_saved(
-        self, name: str, parameters: dict[str, Any], server_id: int | None = None
+        self, name: str, parameters: dict[str, Any], server_id: int | None = None,
+        compact: bool = False,
     ):
         query = QueryDefinition.from_storage(name, await self.render(name, parameters))
         client = await self.graylog.client(server_id)
         executor = self.executors.get(query.type)
-        return await executor.execute(query, client, self.settings, name)
+        return await executor.execute(query, client, self.settings, name, compact=compact)
 
     async def execute_tool(self, name: str, args: dict[str, Any]):
         client = await self.graylog.client()
         if name == "search_messages":
-            return await client.search_messages(**args)
+            values = {**args, "compact": True}
+            values.setdefault("limit", self.settings.graylog_default_limit)
+            return await client.search_messages(**values)
         if name == "aggregate":
-            return await client.aggregate(**args)
+            return await client.aggregate(compact=True, **args)
         if name == "list_streams":
-            return await client.streams()
+            streams = await client.streams()
+            items = streams.get("streams", streams) if isinstance(streams, dict) else streams
+            return {"streams": items, "result_count": len(items) if isinstance(items, list) else None}
         if name == "list_saved_queries":
             return {"queries": await self.summaries()}
         if name == "run_saved_query":
-            return await self.execute_saved(args["name"], args.get("parameters", {}))
+            return await self.execute_saved(args["name"], args.get("parameters", {}), compact=True)
+        if name == "search_error_patterns":
+            return await client.search_error_patterns(**args)
+        if name == "compare_time_windows":
+            return await client.compare_time_windows(**args)
+        if name == "get_log_context":
+            return await client.get_log_context(**args)
         raise ValueError(f"Unsupported tool: {name}")

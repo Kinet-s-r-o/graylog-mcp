@@ -11,34 +11,35 @@ class QueryExecutor(Protocol):
     query_type: str
 
     async def execute(
-        self, definition: QueryDefinition, client: GraylogClient, settings: Settings, query_name: str
+        self, definition: QueryDefinition, client: GraylogClient, settings: Settings, query_name: str,
+        compact: bool = False,
     ) -> Any: ...
 
 
 class MessageQueryExecutor:
     query_type = "messages"
 
-    async def execute(self, definition, client, settings, query_name):
+    async def execute(self, definition, client, settings, query_name, compact=False):
         return await client.search_messages(
             definition.query,
             definition.minutes,
             definition.limit or settings.graylog_default_limit,
             definition.fields,
-            query_name,
+            query_name, compact=compact,
         )
 
 
 class AggregateQueryExecutor:
     query_type = "aggregate"
 
-    async def execute(self, definition, client, settings, query_name):
+    async def execute(self, definition, client, settings, query_name, compact=False):
         return await client.aggregate(
             definition.query,
             definition.minutes,
             definition.group_by,
             definition.metrics,
             definition.interval,
-            query_name,
+            query_name, compact=compact,
         )
 
 

@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     graylog_api_token: str | None = None
     graylog_verify_tls: bool = True
     graylog_timeout_seconds: float = 30
-    graylog_default_limit: int = 100
+    graylog_default_limit: int = 50
     graylog_max_limit: int = 1000
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"

@@ -36,10 +36,14 @@ log = logging.getLogger(__name__)
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {"name": "search_messages", "description": "Search Graylog messages using a Lucene query", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "minutes": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["query"]}}},
-    {"type": "function", "function": {"name": "aggregate", "description": "Aggregate Graylog data by fields and metrics", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "minutes": {"type": "integer"}, "group_by": {"type": "array", "items": {"type": "object"}}, "metrics": {"type": "array", "items": {"type": "object"}}}, "required": ["query"]}}},
-    {"type": "function", "function": {"name": "list_saved_queries", "description": "List custom queries from the query catalog", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "run_saved_query", "description": "Run a managed Graylog query template by name", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "parameters": {"type": "object"}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "search_messages", "description": "Search Graylog messages. Use a narrow time range and fields; results are compact and include truncation metadata.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Lucene query"}, "minutes": {"type": "integer", "minimum": 1, "maximum": 525600, "default": 15}, "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 50}, "fields": {"type": "array", "items": {"type": "string"}}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "aggregate", "description": "Aggregate Graylog data by fields and metrics. Prefer this before requesting raw messages.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "minutes": {"type": "integer", "minimum": 1, "maximum": 525600, "default": 60}, "group_by": {"type": "array", "items": {"type": "object"}}, "metrics": {"type": "array", "items": {"type": "object"}}, "interval": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "list_streams", "description": "List Graylog streams.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "list_saved_queries", "description": "List managed query templates and their intended use.", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "run_saved_query", "description": "Run a managed Graylog query template by name.", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "parameters": {"type": "object"}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "search_error_patterns", "description": "Find and rank normalized recurring error message patterns with representative samples.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "default": "level:3 OR level:4 OR level:5"}, "minutes": {"type": "integer", "minimum": 1, "default": 60}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "compare_time_windows", "description": "Compare the current time window with the immediately preceding window.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "minutes": {"type": "integer", "minimum": 1, "default": 60}, "group_by": {"type": "array", "items": {"type": "object"}}, "metrics": {"type": "array", "items": {"type": "object"}}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "get_log_context", "description": "Retrieve log events around an ISO-8601 timestamp, optionally narrowed by correlation ID.", "parameters": {"type": "object", "properties": {"timestamp": {"type": "string"}, "query": {"type": "string", "default": "*"}, "before": {"type": "integer", "minimum": 0, "maximum": 60, "default": 5}, "after": {"type": "integer", "minimum": 0, "maximum": 60, "default": 5}, "correlation_id": {"type": "string"}}, "required": ["timestamp"]}}},
 ]
 
 
@@ -164,7 +168,7 @@ def create_app(
         limit: int | None = None,
         fields: list[str] | None = None,
     ) -> str:
-        """Search Graylog messages with a Lucene query over a relative time window."""
+        """Search compact Graylog messages with result count and truncation metadata."""
         result = await mcp_adapter.invoke(
             "search_messages",
             {"query": query, "minutes": minutes, "limit": limit or settings.graylog_default_limit, "fields": fields},
@@ -203,6 +207,38 @@ def create_app(
         """Run a database-managed query template with parameter overrides."""
         return json.dumps(
             await mcp_adapter.invoke("run_saved_query", {"name": name, "parameters": parameters or {}}),
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    async def search_error_patterns(
+        query: str = "level:3 OR level:4 OR level:5", minutes: int = 60, limit: int = 20
+    ) -> str:
+        """Find recurring normalized error patterns and representative samples."""
+        return json.dumps(
+            await mcp_adapter.invoke("search_error_patterns", {"query": query, "minutes": minutes, "limit": limit}),
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    async def compare_time_windows(
+        query: str, minutes: int = 60, group_by: list[dict] | None = None,
+        metrics: list[dict] | None = None,
+    ) -> str:
+        """Compare current and previous Graylog windows using the same query."""
+        return json.dumps(
+            await mcp_adapter.invoke("compare_time_windows", {"query": query, "minutes": minutes, "group_by": group_by, "metrics": metrics}),
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    async def get_log_context(
+        timestamp: str, query: str = "*", before: int = 5, after: int = 5,
+        correlation_id: str | None = None,
+    ) -> str:
+        """Retrieve log events around a timestamp or correlation ID."""
+        return json.dumps(
+            await mcp_adapter.invoke("get_log_context", {"timestamp": timestamp, "query": query, "before": before, "after": after, "correlation_id": correlation_id}),
             ensure_ascii=False,
         )
 
@@ -254,6 +290,9 @@ def create_app(
             "list_streams": list_streams,
             "list_saved_queries": list_saved_queries,
             "run_saved_query": run_saved_query,
+            "search_error_patterns": search_error_patterns,
+            "compare_time_windows": compare_time_windows,
+            "get_log_context": get_log_context,
             "ask_graylog": ask_graylog,
             "execute": execute,
         },

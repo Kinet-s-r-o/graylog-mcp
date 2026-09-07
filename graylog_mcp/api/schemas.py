@@ -75,6 +75,30 @@ class AggregateRequest(StrictRequest):
         return value
 
 
+class ErrorPatternRequest(StrictRequest):
+    query: str = "level:3 OR level:4 OR level:5"
+    minutes: int = Field(60, ge=1, le=525_600)
+    limit: int = Field(20, ge=1, le=100)
+
+
+class CompareWindowsRequest(StrictRequest):
+    query: str = Field(min_length=1, max_length=20_000)
+    minutes: int = Field(60, ge=1, le=525_600)
+    group_by: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    metrics: list[dict[str, Any]] | None = Field(None, max_length=50)
+
+    _groupings = field_validator("group_by")(_validate_groupings)
+    _metrics = field_validator("metrics")(_validate_metrics)
+
+
+class LogContextRequest(StrictRequest):
+    timestamp: str = Field(min_length=1, max_length=64)
+    query: str = Field("*", min_length=1, max_length=20_000)
+    before: int = Field(5, ge=0, le=60)
+    after: int = Field(5, ge=0, le=60)
+    correlation_id: str | None = Field(None, max_length=512)
+
+
 class SavedQueryRequest(StrictRequest):
     name: str
     parameters: dict[str, Any] = Field(default_factory=dict)

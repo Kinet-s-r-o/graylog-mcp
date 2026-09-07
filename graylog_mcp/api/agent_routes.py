@@ -7,7 +7,10 @@ from ..services.graylog_service import GraylogService
 from ..services.query_service import QueryService
 from ..services.adapters import GraylogOperations, RESTToolAdapter
 from ..settings import Settings
-from .schemas import AggregateRequest, SavedQueryRequest, SearchRequest
+from .schemas import (
+    AggregateRequest, CompareWindowsRequest, ErrorPatternRequest, LogContextRequest,
+    SavedQueryRequest, SearchRequest,
+)
 
 
 def create_agent_router(
@@ -39,6 +42,18 @@ def create_agent_router(
     @router.get("/streams", tags=["Graylog"])
     async def streams(_agent=Depends(auth.require)):
         return await adapter.streams()
+
+    @router.post("/search/error-patterns", tags=["Graylog"])
+    async def error_patterns(body: ErrorPatternRequest, _agent=Depends(auth.require)):
+        return await adapter.search_error_patterns(**body.model_dump())
+
+    @router.post("/search/compare-windows", tags=["Graylog"])
+    async def compare_windows(body: CompareWindowsRequest, _agent=Depends(auth.require)):
+        return await adapter.compare_time_windows(**body.model_dump())
+
+    @router.post("/search/context", tags=["Graylog"])
+    async def log_context(body: LogContextRequest, _agent=Depends(auth.require)):
+        return await adapter.get_log_context(**body.model_dump())
 
     @router.get("/queries", tags=["Saved queries"])
     async def saved_queries(_agent=Depends(auth.require)):

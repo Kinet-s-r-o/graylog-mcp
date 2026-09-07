@@ -82,7 +82,17 @@ Audit log obsahuje aj SQLite FTS5 fulltext index. Vo web UI ho možno prehľadá
 
 Queries are created and edited in the `Query Rules` section of the Web UI and persisted in SQLite. Supported types are `messages` and `aggregate`. Template parameters such as `${name}` can be supplied through the `run_saved_query` MCP tool. The bundled [queries.yaml](queries.yaml) file is used only to seed an empty database.
 
-Native tools: `search_messages`, `aggregate`, `list_streams`, `list_saved_queries`, `run_saved_query`, and `ask_graylog`.
+Native tools: `search_messages`, `aggregate`, `list_streams`, `list_saved_queries`,
+`run_saved_query`, `search_error_patterns`, `compare_time_windows`,
+`get_log_context`, and `ask_graylog`.
+
+AI-facing search and aggregation tools return compact responses with the original
+query, time range, result count, truncation status, and normalized items/groups.
+Use `aggregate` or `search_error_patterns` before requesting raw messages. The
+specialized analysis tools compare adjacent time windows, group recurring error
+patterns, and retrieve bounded context around an ISO-8601 timestamp. The same
+operations are available through `/api/v1/search/error-patterns`,
+`/api/v1/search/compare-windows`, and `/api/v1/search/context`.
 
 ### API compatibility and extension points
 

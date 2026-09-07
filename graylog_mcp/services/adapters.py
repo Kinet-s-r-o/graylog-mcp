@@ -22,6 +22,15 @@ class GraylogOperations:
     async def streams(self):
         return await (await self.graylog.client()).streams()
 
+    async def search_error_patterns(self, **args):
+        return await (await self.graylog.client()).search_error_patterns(**args)
+
+    async def compare_time_windows(self, **args):
+        return await (await self.graylog.client()).compare_time_windows(**args)
+
+    async def get_log_context(self, **args):
+        return await (await self.graylog.client()).get_log_context(**args)
+
     async def execute_tool(self, name: str, args: dict[str, Any]):
         return await self.queries.execute_tool(name, args)
 
@@ -45,3 +54,6 @@ class RESTToolAdapter:
     async def search_messages(self, **args): return await self.operations.search_messages(**args)
     async def aggregate(self, **args): return await self.operations.aggregate(**args)
     async def streams(self): return await self.operations.streams()
+    async def search_error_patterns(self, **args): return await self.operations.search_error_patterns(**args)
+    async def compare_time_windows(self, **args): return await self.operations.compare_time_windows(**args)
+    async def get_log_context(self, **args): return await self.operations.get_log_context(**args)
