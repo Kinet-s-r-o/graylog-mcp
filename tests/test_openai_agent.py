@@ -60,5 +60,7 @@ def test_openai_agent_deduplicates_and_runs_independent_calls_in_parallel():
         assert answer == "done"
         assert len(seen) == 2
         assert elapsed < 0.09
+        assert fake.calls == 2
+        assert agent.last_result["tool_calls"] == ["aggregate", "search_messages"]
 
     asyncio.run(scenario())

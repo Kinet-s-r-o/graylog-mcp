@@ -33,12 +33,17 @@ class Settings(BaseSettings):
     graylog_api_token: str | None = None
     graylog_verify_tls: bool = True
     graylog_timeout_seconds: float = 30
+    graylog_retry_attempts: int = Field(2, ge=0, le=5)
+    graylog_retry_backoff_seconds: float = Field(0.25, ge=0, le=30)
+    graylog_circuit_failure_threshold: int = Field(5, ge=1, le=100)
+    graylog_circuit_recovery_seconds: float = Field(30, gt=0, le=3600)
     graylog_default_limit: int = 50
     graylog_max_limit: int = 1000
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str | None = None
     openai_max_tool_rounds: int = 5
+    openai_max_response_chars: int = Field(12_000, ge=1000, le=100_000)
     query_catalog_path: Path = Path("queries.yaml")
     audit_db_path: Path = Path("/data/audit.db")
     audit_retention_days: int = 30

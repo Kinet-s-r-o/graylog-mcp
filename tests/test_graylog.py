@@ -1,6 +1,8 @@
 import asyncio
+import httpx
 
 from graylog_mcp.graylog import GraylogClient, normalize_error_message, normalize_messages
+from graylog_mcp.observability import MetricsRegistry
 
 
 class DummySettings:
@@ -68,6 +70,69 @@ def test_error_patterns_and_window_comparison_are_structured():
             comparison = await client.compare_time_windows("level:3", minutes=15)
             assert comparison["current"]["groups"] == [{"service": "api", "count": 2}]
             assert comparison["previous"]["groups"] == [{"service": "api", "count": 2}]
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_graylog_retries_transient_http_errors_and_records_metrics():
+    async def scenario():
+        settings = type("Settings", (), {
+            "normalized_graylog_url": "https://graylog.example", "graylog_api_token": "token",
+            "graylog_verify_tls": True, "graylog_timeout_seconds": 5, "graylog_retry_attempts": 1,
+            "graylog_retry_backoff_seconds": 0, "graylog_circuit_failure_threshold": 5,
+            "graylog_circuit_recovery_seconds": 30,
+        })()
+        metrics = MetricsRegistry()
+        client = GraylogClient(settings, metrics=metrics)
+        attempts = 0
+
+        async def handler(request):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(503, request=request)
+            return httpx.Response(200, json={"ok": True}, request=request)
+
+        await client.client.aclose()
+        client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://graylog.example")
+        try:
+            assert await client.request("GET", "/api/cluster") == {"ok": True}
+            rendered = metrics.render()
+            assert "graylog_mcp_graylog_retries_total 1" in rendered
+            assert "graylog_mcp_graylog_request_attempts_total 2" in rendered
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_graylog_circuit_breaker_short_circuits_repeated_outages():
+    async def scenario():
+        settings = type("Settings", (), {
+            "normalized_graylog_url": "https://graylog.example", "graylog_api_token": "token",
+            "graylog_verify_tls": True, "graylog_timeout_seconds": 5, "graylog_retry_attempts": 0,
+            "graylog_retry_backoff_seconds": 0, "graylog_circuit_failure_threshold": 1,
+            "graylog_circuit_recovery_seconds": 30,
+        })()
+        client = GraylogClient(settings)
+        attempts = 0
+
+        async def handler(request):
+            nonlocal attempts
+            attempts += 1
+            raise httpx.ConnectError("offline", request=request)
+
+        await client.client.aclose()
+        client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://graylog.example")
+        try:
+            for expected in ("graylog_request_failed", "graylog_circuit_open"):
+                try:
+                    await client.request("GET", "/api/cluster")
+                except Exception as exc:
+                    assert exc.code == expected
+            assert attempts == 1
         finally:
             await client.close()
 

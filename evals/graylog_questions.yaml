@@ -1,0 +1,17 @@
+scenarios:
+  - id: error-spike
+    question: "Are errors increasing for the api service in the last hour?"
+    preferred_tools: [compare_time_windows, search_error_patterns]
+    required_evidence: [time_range, current_vs_previous, service, error_count]
+  - id: recurring-errors
+    question: "What are the most common error patterns in the last 30 minutes?"
+    preferred_tools: [search_error_patterns]
+    required_evidence: [time_range, pattern, count, sample]
+  - id: incident-context
+    question: "Show the log context around this event timestamp and correlation ID."
+    preferred_tools: [get_log_context]
+    required_evidence: [timestamp, correlation_id, bounded_context]
+  - id: service-health
+    question: "Which services generated the most errors during the last hour?"
+    preferred_tools: [aggregate, search_error_patterns]
+    required_evidence: [time_range, grouping, ranking]

@@ -247,7 +247,7 @@ def create_app(
         """Answer a Graylog question using OpenAI to orchestrate Graylog tools."""
         if not settings.openai_api_key:
             return "OpenAI is not configured. Use search_messages, aggregate or run_saved_query directly."
-        return await OpenAIAgent(settings, TOOL_SCHEMAS, audit).ask(question, execute)
+        return await OpenAIAgent(settings, TOOL_SCHEMAS, audit, metrics).ask(question, execute)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

@@ -94,6 +94,15 @@ patterns, and retrieve bounded context around an ISO-8601 timestamp. The same
 operations are available through `/api/v1/search/error-patterns`,
 `/api/v1/search/compare-windows`, and `/api/v1/search/context`.
 
+Graylog calls use bounded retries for transient network and 429/5xx failures,
+with exponential backoff and a circuit breaker. Configure these with
+`GRAYLOG_RETRY_ATTEMPTS`, `GRAYLOG_RETRY_BACKOFF_SECONDS`,
+`GRAYLOG_CIRCUIT_FAILURE_THRESHOLD`, and `GRAYLOG_CIRCUIT_RECOVERY_SECONDS`.
+The AI orchestration stores a structured internal result containing the answer,
+round count, tool calls, tool errors, and truncation status; the public MCP
+response remains text-compatible. Evaluation scenarios are maintained in
+`evals/graylog_questions.yaml` and can be extended with production questions.
+
 ### API compatibility and extension points
 
 The `/api/v1` contract is versioned by the `X-API-Version: 1` response header.

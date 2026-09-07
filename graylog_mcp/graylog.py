@@ -12,7 +12,11 @@ from .security import agent_context
 
 
 class GraylogError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "graylog_error", retryable: bool = False, status_code: int | None = None):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.status_code = status_code
 
 
 def _timerange(minutes: int) -> dict[str, Any]:
@@ -94,6 +98,9 @@ class GraylogClient:
         self.settings = settings
         self.audit = audit
         self.metrics = metrics
+        self._consecutive_failures = 0
+        self._circuit_opened_at: float | None = None
+        self._circuit_lock = asyncio.Lock()
         server = server or {}
         self.client = httpx.AsyncClient(
             base_url=(server.get("url") or settings.normalized_graylog_url or "http://invalid-graylog"),
@@ -107,35 +114,89 @@ class GraylogClient:
     async def close(self):
         await self.client.aclose()
 
+    async def _check_circuit(self) -> None:
+        if self._circuit_opened_at is None:
+            return
+        recovery = float(getattr(self.settings, "graylog_circuit_recovery_seconds", 30))
+        if stopwatch() - self._circuit_opened_at < recovery:
+            if self.metrics:
+                self.metrics.inc("graylog_mcp_graylog_circuit_open_total")
+            raise GraylogError("Graylog circuit breaker is open", code="graylog_circuit_open", retryable=True)
+        self._circuit_opened_at = None
+        self._consecutive_failures = 0
+
+    async def _record_success(self) -> None:
+        async with self._circuit_lock:
+            self._consecutive_failures = 0
+            self._circuit_opened_at = None
+
+    async def _record_failure(self, retryable: bool) -> None:
+        if not retryable:
+            return
+        async with self._circuit_lock:
+            self._consecutive_failures += 1
+            threshold = int(getattr(self.settings, "graylog_circuit_failure_threshold", 5))
+            if self._consecutive_failures >= threshold:
+                self._circuit_opened_at = stopwatch()
+
+    @staticmethod
+    def _retryable_exception(exc: Exception) -> bool:
+        return isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError))
+
     async def request(self, method: str, path: str, *, params=None, json=None,
                       query_rule: str | None = None) -> Any:
         started = stopwatch()
         context = agent_context.get() or {}
         agent_id = context.get("agent_id")
         client_ip = context.get("client_ip")
-        try:
-            response = await self.client.request(method, path, params=params, json=json)
-            if response.is_error:
-                raise GraylogError(f"Graylog API returned HTTP {response.status_code} for {path}")
-            result = response.json() if response.content else {}
+        await self._check_circuit()
+        retry_attempts = int(getattr(self.settings, "graylog_retry_attempts", 2))
+        backoff = float(getattr(self.settings, "graylog_retry_backoff_seconds", 0.25))
+        response = None
+        last_error: Exception | None = None
+        for attempt in range(retry_attempts + 1):
             if self.metrics:
-                self.metrics.inc("graylog_mcp_graylog_requests_total")
-                self.metrics.inc("graylog_mcp_graylog_latency_ms_total", int((stopwatch()-started)*1000))
-            if self.audit:
-                audit_request = {"params": params, "json": json}
-                if query_rule:
-                    audit_request["query_rule"] = query_rule
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request=audit_request, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id, client_ip=client_ip)
-            return result
-        except Exception as exc:
-            if self.metrics:
-                self.metrics.inc("graylog_mcp_graylog_errors_total")
-            if self.audit:
-                audit_request = {"params": params, "json": json}
-                if query_rule:
-                    audit_request["query_rule"] = query_rule
-                await self.audit.record(source="graylog", operation=f"{method} {path}", request=audit_request, status_code=getattr(locals().get("response", None), "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc), agent_id=agent_id, client_ip=client_ip)
-            raise
+                self.metrics.inc("graylog_mcp_graylog_request_attempts_total")
+            try:
+                response = await self.client.request(method, path, params=params, json=json)
+                if response.is_error:
+                    retryable = response.status_code == 429 or response.status_code >= 500
+                    raise GraylogError(
+                        f"Graylog API returned HTTP {response.status_code} for {path}",
+                        code="graylog_http_error", retryable=retryable, status_code=response.status_code,
+                    )
+                result = response.json() if response.content else {}
+                await self._record_success()
+                if self.metrics:
+                    self.metrics.inc("graylog_mcp_graylog_requests_total")
+                    self.metrics.inc("graylog_mcp_graylog_latency_ms_total", int((stopwatch()-started)*1000))
+                if self.audit:
+                    audit_request = {"params": params, "json": json}
+                    if query_rule:
+                        audit_request["query_rule"] = query_rule
+                    await self.audit.record(source="graylog", operation=f"{method} {path}", request=audit_request, response=result, status_code=response.status_code, duration_ms=(stopwatch()-started)*1000, agent_id=agent_id, client_ip=client_ip)
+                return result
+            except Exception as exc:
+                last_error = exc
+                retryable = getattr(exc, "retryable", False) or self._retryable_exception(exc)
+                await self._record_failure(retryable and attempt == retry_attempts)
+                if not retryable or attempt >= retry_attempts:
+                    break
+                if self.metrics:
+                    self.metrics.inc("graylog_mcp_graylog_retries_total")
+                await asyncio.sleep(backoff * (2 ** attempt))
+        assert last_error is not None
+        exc = last_error
+        if self.metrics:
+            self.metrics.inc("graylog_mcp_graylog_errors_total")
+        if self.audit:
+            audit_request = {"params": params, "json": json}
+            if query_rule:
+                audit_request["query_rule"] = query_rule
+            await self.audit.record(source="graylog", operation=f"{method} {path}", request=audit_request, status_code=getattr(response, "status_code", None), duration_ms=(stopwatch()-started)*1000, success=False, error=str(exc), agent_id=agent_id, client_ip=client_ip)
+        if isinstance(exc, GraylogError):
+            raise exc
+        raise GraylogError(str(exc), code="graylog_request_failed", retryable=True) from exc
 
     async def search_messages(self, query: str, minutes: int = 15, limit: int = 50,
                               fields: list[str] | None = None,
