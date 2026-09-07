@@ -234,6 +234,8 @@ class GraylogClient:
             if "field" not in item and item.get("type") in {"field", "time", "timestamp"} and item.get("id"):
                 item["field"] = item.pop("id")
                 item.pop("type", None)
+            elif item.get("type") in {"field", "keyword"}:
+                item.pop("type", None)
         normalized_metrics = [dict(item) for item in (metrics or [{"function": "count", "id": "count"}])]
         for item in normalized_metrics:
             if "function" not in item and item.get("type"):

@@ -47,10 +47,10 @@ def test_aggregate_normalizes_openwebui_grouping_shape():
         try:
             await client.aggregate(
                 "*",
-                group_by=[{"type": "field", "id": "severity"}],
+                group_by=[{"type": "field", "id": "severity"}, {"type": "keyword", "field": "device"}],
                 metrics=[{"type": "count", "id": "count"}],
             )
-            assert captured["json"]["group_by"] == [{"field": "severity"}]
+            assert captured["json"]["group_by"] == [{"field": "severity"}, {"field": "device"}]
             assert captured["json"]["metrics"] == [{"function": "count", "id": "count"}]
         finally:
             await client.close()

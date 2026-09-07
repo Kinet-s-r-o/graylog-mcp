@@ -26,6 +26,8 @@ def validate_groupings(value: list[dict[str, Any]]) -> list[dict[str, Any]]:
         elif "field" not in item and item.get("type") in {"time", "timestamp"} and isinstance(item.get("id"), str):
             item["field"] = item.pop("id")
             item.pop("type", None)
+        elif item.get("type") in {"field", "keyword"}:
+            item.pop("type", None)
         field = item.get("field")
         if not isinstance(field, str) or not field.strip() or len(field) > 255 or not NAME_PATTERN.fullmatch(field):
             raise ValueError("Every grouping must contain a valid field")
