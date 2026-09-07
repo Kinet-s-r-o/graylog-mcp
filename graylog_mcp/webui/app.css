@@ -327,6 +327,35 @@ body.dark .theme {
   border-collapse: collapse;
   font-size: 0.9rem;
 }
+.audit-log-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+.audit-log-table th,
+.audit-log-table td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.audit-log-table th:nth-child(1),
+.audit-log-table td:nth-child(1) { width: 4%; }
+.audit-log-table th:nth-child(2),
+.audit-log-table td:nth-child(2) { width: 11%; }
+.audit-log-table th:nth-child(3),
+.audit-log-table td:nth-child(3) { width: 7%; }
+.audit-log-table th:nth-child(4),
+.audit-log-table td:nth-child(4) { width: 10%; }
+.audit-log-table th:nth-child(5),
+.audit-log-table td:nth-child(5) { width: 9%; }
+.audit-log-table th:nth-child(6),
+.audit-log-table td:nth-child(6) { width: 8%; }
+.audit-log-table th:nth-child(7),
+.audit-log-table td:nth-child(7) { width: 13%; }
+.audit-log-table th:nth-child(8),
+.audit-log-table td:nth-child(8) { width: 7%; }
+.audit-log-table th:nth-child(9),
+.audit-log-table td:nth-child(9) { width: 7%; }
+.audit-log-table th:nth-child(10),
+.audit-log-table td:nth-child(10) { width: 24%; }
 .audit-table th,
 .audit-table td {
   padding: 0.65rem 0.7rem;
@@ -350,17 +379,28 @@ body.dark .theme {
   font-weight: 600;
 }
 .audit-detail {
-  min-width: 360px;
+  display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 .audit-detail summary {
   cursor: pointer;
   color: #2563eb;
+  overflow-wrap: anywhere;
+}
+.audit-payload {
+  min-width: 0;
 }
 .audit-detail pre {
   min-height: 0;
   margin: 0.5rem 0 0;
   font-size: 0.8rem;
-  max-height: 260px;
+  max-width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .audit-empty {
   text-align: center;
