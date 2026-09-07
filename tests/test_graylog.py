@@ -58,6 +58,25 @@ def test_aggregate_normalizes_openwebui_grouping_shape():
     asyncio.run(scenario())
 
 
+def test_count_metric_drops_text_field_that_would_trigger_fielddata_error():
+    async def scenario():
+        client = GraylogClient(DummySettings())
+        captured = {}
+
+        async def fake_request(method, path, *, params=None, json=None):
+            captured["json"] = json
+            return {"datarows": [], "schema": []}
+
+        client.request = fake_request
+        try:
+            await client.aggregate("*", metrics=[{"function": "count", "field": "message"}])
+            assert captured["json"]["metrics"] == [{"function": "count"}]
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_normalized_messages_are_compact_and_mark_truncation():
     result = normalize_messages(
         {"total_messages": 50, "messages": [{"message": {"message": "failed", "level": 3}}]},

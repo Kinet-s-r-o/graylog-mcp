@@ -239,6 +239,8 @@ class GraylogClient:
             if "function" not in item and item.get("type"):
                 item["function"] = {"avg": "average", "mean": "average"}.get(item["type"], item["type"])
                 item.pop("type", None)
+            if item.get("function") == "count":
+                item.pop("field", None)
         body = {"query": query, "timerange": _timerange(minutes),
                 "group_by": normalized_group_by, "metrics": normalized_metrics,
                 }
@@ -254,11 +256,16 @@ class GraylogClient:
                                 group_by: list[dict[str, Any]] | None = None,
                                 metrics: list[dict[str, Any]] | None = None,
                                 interval: str | None = None):
+        normalized_metrics = [dict(item) for item in (metrics or [{"function": "count", "id": "count"}])]
+        for item in normalized_metrics:
+            if item.get("function") == "count" or item.get("type") == "count":
+                item.pop("field", None)
+                item["function"] = "count"
         body: dict[str, Any] = {
             "query": query,
             "timerange": _absolute_timerange(start, end),
             "group_by": list(group_by or []),
-            "metrics": list(metrics or [{"function": "count", "id": "count"}]),
+            "metrics": normalized_metrics,
         }
         if interval:
             body["group_by"].append({"field": "timestamp", "timeunit": interval})

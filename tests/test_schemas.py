@@ -56,6 +56,11 @@ def test_query_rule_validates_interval_grouping_and_metrics():
     assert normalized.group_by == [{"field": "severity"}]
     assert normalized.metrics == [{"function": "count", "id": "count"}]
 
+    count_without_fielddata = QueryDefinitionInput(
+        name="count", query="*", metrics=[{"function": "count", "field": "message"}],
+    )
+    assert count_without_fielddata.metrics == [{"function": "count"}]
+
 
 def test_query_rule_allows_empty_limit_for_aggregations():
     rule = QueryDefinitionInput(name="total", type="aggregate", query="*", limit=None)

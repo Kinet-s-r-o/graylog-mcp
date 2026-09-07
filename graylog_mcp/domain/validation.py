@@ -43,6 +43,10 @@ def validate_metrics(value: list[dict[str, Any]] | None) -> list[dict[str, Any]]
         function = item.get("function")
         if function not in METRIC_FUNCTIONS:
             raise ValueError(f"Unsupported metric function: {function}")
+        if function == "count":
+            # Graylog counts matching messages and does not need a field.
+            # Dropping a supplied text field also avoids fielddata errors.
+            item.pop("field", None)
         field = item.get("field")
         if function != "count" and (not isinstance(field, str) or not field.strip() or len(field) > 255 or not NAME_PATTERN.fullmatch(field)):
             raise ValueError(f"Metric {function} requires a field")
